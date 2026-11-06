@@ -9,6 +9,11 @@
 # the base branch red. These tests pin the two properties that prevent it — one
 # merge at a time, and the proof happens under the lock.
 set -euo pipefail
+# python3 may be a Windows Store stub: put a working `python3` shim on PATH (also covers shebangs).
+. "$(dirname "${BASH_SOURCE[0]}")/../scripts/super-board-python.sh"; sb_python_init || exit 1
+sb_python_shim
+# Fixture repos: never inherit a global core.autocrlf=true (it rewrites checked-out files to CRLF).
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.autocrlf GIT_CONFIG_VALUE_0=false
 cd "$(dirname "$0")"
 GATE="../scripts/super-board-merge-gate.sh"
 
@@ -226,7 +231,7 @@ teardown
 #      merge that already happened.
 head_setup
 mkdir -p "$TMP/.claude/hooks"
-printf 'import sys\nopen("%s/cleanup.args","w").write(" ".join(sys.argv[1:]))\nsys.exit(1)\n' "$TMP" \
+printf 'import sys\nopen("%s/cleanup.args","w").write(" ".join(sys.argv[1:]))\nsys.exit(1)\n' "$(cygpath -m "$TMP" 2>/dev/null || printf %s "$TMP")" \
   > "$TMP/.claude/hooks/cleanup-wt.py"
 RC=0; STUB_OID="$SHA" gate --expect-head "$SHA" >/dev/null 2>&1 || RC=$?
 [ "$RC" -eq 0 ] || fail "a failing cleanup must not fail the merge, got $RC"

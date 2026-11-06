@@ -103,6 +103,13 @@ def verdict(path, project, env):
     if any(under(p, r) for p in forms for r in roots):
         return None
     temps = TEMP_ROOTS + ([os.path.normpath(env["TMPDIR"])] if env.get("TMPDIR") else [])
+    if os.name == "nt":
+        # "/tmp" typed in Git Bash is the Windows temp dir; a native process sees it as C:\tmp.
+        # Accept both, and compare the way Windows does (drive letter and case do not matter).
+        import tempfile
+        temps = [os.path.abspath(t) for t in TEMP_ROOTS] + [tempfile.gettempdir(), os.path.realpath(tempfile.gettempdir())] + temps
+        temps = [os.path.normcase(os.path.normpath(t)) for t in temps]
+        forms = {os.path.normcase(p) for p in forms}
     if any(under(p, t) and p.rstrip(os.sep) != t.rstrip(os.sep) for p in forms for t in temps):
         return None
     return "is outside the project (%s)" % project

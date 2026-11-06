@@ -21,6 +21,13 @@
 #     [--area <area>] [--pr <number>] [--column <name>]
 #
 # Stdout: the issue number (new, or the existing one on a fingerprint hit).
+# Windows: `python3` may be a Store stub; use the resolved interpreter when the resolver ships alongside.
+for _sb_py_lib in "$(dirname "${BASH_SOURCE[0]}")"/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../scripts/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../bin/super-board-python.sh; do
+  [ -f "$_sb_py_lib" ] || continue
+  . "$_sb_py_lib"; [ -n "${SB_PYTHON:-}" ] || sb_python_init 2>/dev/null || true
+  break
+done
+unset _sb_py_lib
 set -euo pipefail
 
 CONFIG=""; TITLE=""; BODY_FILE=""; FINGERPRINT=""
@@ -75,7 +82,7 @@ else
 fi
 
 GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-read.py"
-python3 "$GITHUB_READ" --check || exit $?
+"${SB_PYTHON:-python3}" "$GITHUB_READ" --check || exit $?
 
 # --- dedupe -----------------------------------------------------------------
 # The fingerprint is stamped into the body as an HTML comment so it survives
@@ -83,20 +90,20 @@ python3 "$GITHUB_READ" --check || exit $?
 STAMP="<!-- super-review-fingerprint: ${FINGERPRINT} -->"
 REPO_NAME="${REPO_FLAG[1]:-}"
 if [ -z "$REPO_NAME" ]; then
-  REPO_NAME=$(python3 "$GITHUB_READ" --kind scalar -- repo view --json nameWithOwner --jq .nameWithOwner) || exit $?
+  REPO_NAME=$("${SB_PYTHON:-python3}" "$GITHUB_READ" --kind scalar -- repo view --json nameWithOwner --jq .nameWithOwner) || exit $?
 fi
-ISSUES_JSON=$(python3 "$GITHUB_READ" --issue-history "$REPO_NAME") || exit $?
+ISSUES_JSON=$("${SB_PYTHON:-python3}" "$GITHUB_READ" --issue-history "$REPO_NAME") || exit $?
 EXISTING=$(printf '%s' "$ISSUES_JSON" | jq -r --arg fingerprint "$FINGERPRINT" '[.[] | select(.state == "OPEN" and any(.body | splits("\\s+"); . == $fingerprint)) | .number] | first // empty')
 
 
 if [ -n "$EXISTING" ]; then
   # Same shape problem, seen again on a later PR. Add the sighting, don't stack cards.
-  python3 "$GITHUB_READ" --check || exit $?
+  "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || exit $?
   gh issue comment "$EXISTING" "${REPO_FLAG[@]}" \
     --body "Seen again during review${PR:+ of #${PR}}.
 
 $(cat "$BODY_FILE")" >/dev/null 2>&1 \
-    || { python3 "$GITHUB_READ" --halt "Comment outcome unknown for #${EXISTING}; inspect before retrying"; exit 79; }
+    || { "${SB_PYTHON:-python3}" "$GITHUB_READ" --halt "Comment outcome unknown for #${EXISTING}; inspect before retrying"; exit 79; }
   echo "$EXISTING"
   exit 0
 fi
@@ -173,7 +180,7 @@ if [ -n "$AREA" ]; then LABELS+=("area:${AREA}"); fi
 # Labels may not exist yet on a fresh repo. Create them best-effort; `gh issue
 # create` hard-fails on an unknown label, which would lose the finding entirely.
 for l in "${LABELS[@]}"; do
-  python3 "$GITHUB_READ" --check || exit $?
+  "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || exit $?
   gh label create "$l" "${REPO_FLAG[@]}" --color BFD4F2 --force >/dev/null 2>&1 || true
 done
 
@@ -187,11 +194,11 @@ for l in "${LABELS[@]}"; do LABEL_ARGS+=(--label "$l"); done
 TITLE=$(printf '%s' "$TITLE" | LC_ALL=C sed -E 's/^[^ -~]{1,16} \[[a-z-]+\] [^:]{1,40}: //')
 SCOPE="${AREA:-${FINGERPRINT%%|*}}"
 SCOPE=$(echo "${SCOPE:-code}" | tr '[:upper:]' '[:lower:]' | sed -E 's#[^a-z0-9._/-]+#-#g; s#^-+|-+$##g')
-python3 "$GITHUB_READ" --check || exit $?
+"${SB_PYTHON:-python3}" "$GITHUB_READ" --check || exit $?
 ISSUE_URL=$(gh issue create "${REPO_FLAG[@]}" \
   --title "♻️ [refactor] ${SCOPE:-code}: ${TITLE}" \
   --body-file "$BODY_TMP" \
-  "${LABEL_ARGS[@]}") || { python3 "$GITHUB_READ" --halt "Issue creation response failed; reconcile fingerprint ${FINGERPRINT} before retrying"; exit 79; }
+  "${LABEL_ARGS[@]}") || { "${SB_PYTHON:-python3}" "$GITHUB_READ" --halt "Issue creation response failed; reconcile fingerprint ${FINGERPRINT} before retrying"; exit 79; }
 
 ISSUE_N=$(basename "$ISSUE_URL")
 
@@ -210,10 +217,10 @@ ISSUE_N=$(basename "$ISSUE_URL")
 place_card() {
   local item_id project_id field_json field_id option_id candidate
   local -a candidates
-  python3 "$GITHUB_READ" --check || return $?
-  item_id=$(gh project item-add "$NUMBER" --owner "$OWNER" --url "$ISSUE_URL" --format json --jq '.id') || { python3 "$GITHUB_READ" --halt "Project item add outcome unknown for issue #${ISSUE_N}; reconcile before retrying"; return 79; }
-  project_id=$(python3 "$GITHUB_READ" --kind scalar -- project view "$NUMBER" --owner "$OWNER" --format json --jq '.id') || return $?
-  field_json=$(python3 "$GITHUB_READ" --kind fields -- project field-list "$NUMBER" --owner "$OWNER" --format json) || return $?
+  "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || return $?
+  item_id=$(gh project item-add "$NUMBER" --owner "$OWNER" --url "$ISSUE_URL" --format json --jq '.id') || { "${SB_PYTHON:-python3}" "$GITHUB_READ" --halt "Project item add outcome unknown for issue #${ISSUE_N}; reconcile before retrying"; return 79; }
+  project_id=$("${SB_PYTHON:-python3}" "$GITHUB_READ" --kind scalar -- project view "$NUMBER" --owner "$OWNER" --format json --jq '.id') || return $?
+  field_json=$("${SB_PYTHON:-python3}" "$GITHUB_READ" --kind fields -- project field-list "$NUMBER" --owner "$OWNER" --format json) || return $?
   field_id=$(echo "$field_json" | jq -r '.fields[] | select(.name=="Status") | .id')
   # The requested name first, then the conventional aliases for "not started".
   # Ordered by intent: a holding column beats Ready, because a card filed by a
@@ -240,9 +247,9 @@ place_card() {
   done
 
   if [ -n "$option_id" ] && [ "$option_id" != "null" ]; then
-    python3 "$GITHUB_READ" --check || return $?
+    "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || return $?
     gh project item-edit --id "$item_id" --project-id "$project_id" \
-      --field-id "$field_id" --single-select-option-id "$option_id" >/dev/null || { python3 "$GITHUB_READ" --halt "Project column move outcome unknown for issue #${ISSUE_N}; reconcile before retrying"; return 79; }
+      --field-id "$field_id" --single-select-option-id "$option_id" >/dev/null || { "${SB_PYTHON:-python3}" "$GITHUB_READ" --halt "Project column move outcome unknown for issue #${ISSUE_N}; reconcile before retrying"; return 79; }
   else
     echo "warn: this board has no '${COLUMN}' column and none of the usual aliases" >&2
     echo "warn: (Backlog, Todo, To do, Triage, Inbox) — #${ISSUE_N} is on the board with NO status," >&2
@@ -252,7 +259,7 @@ place_card() {
 
 if ! place_card; then
   echo "$ISSUE_N"
-  python3 "$GITHUB_READ" --check || exit 79
+  "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || exit 79
   echo "warn: filed #${ISSUE_N} but could not place it on project ${OWNER}/${NUMBER}; inspect before retrying" >&2
   exit 71
 fi

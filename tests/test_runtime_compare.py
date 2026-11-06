@@ -18,6 +18,11 @@ import urllib.request
 from unittest import mock
 from fixtures.runtime_http_server import LoopbackHTTPServer
 
+if os.name == 'nt':
+    # runtime_compare.py supervises app process groups (ps, killpg, SIGKILL); those are POSIX-only.
+    print('SKIP: test_runtime_compare.py (POSIX process groups; runtime measurement is not supported on native Windows)')
+    sys.exit(0)
+
 PATH = pathlib.Path(__file__).resolve().parents[1] / 'skills/super-qa/scripts/runtime_compare.py'
 spec = importlib.util.spec_from_file_location('runtime_compare', PATH)
 runtime = importlib.util.module_from_spec(spec)

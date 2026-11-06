@@ -10,8 +10,15 @@ import sys
 import subprocess
 import tempfile
 import unittest
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _compat import BASH, bash_path, native_path  # noqa: E402
 
 PACK = Path(__file__).resolve().parents[1]
+
+
+def bash_path(path):
+    """Forward-slash form: Windows backslashes are eaten when a path is handed to bash."""
+    return Path(path).as_posix()
 
 
 class WorktreePaths(unittest.TestCase):
@@ -51,18 +58,19 @@ class WorktreePaths(unittest.TestCase):
         self.env['SUPER_BOARD_SKILLS_HOME'] = str(Path(self.tmp.name) / 'home')
         Path(self.env['SUPER_BOARD_SKILLS_HOME']).mkdir()
         self.env.update(PATH=str(bin_dir) + os.pathsep + self.env["PATH"], BASE_BRANCH="main",
-                        REPO_DIR=str(self.root), WORKER_CWD=str(Path(self.tmp.name) / "worker-cwd"))
+                        REPO_DIR=bash_path(self.root), WORKER_CWD=bash_path(Path(self.tmp.name) / "worker-cwd"))
 
     def dispatch(self):
-        return self.run_cmd("bash", str(PACK / "skills/super-build/scripts/super-build-dispatch.sh"),
+        return self.run_cmd(BASH, bash_path(PACK / "skills/super-build/scripts/super-build-dispatch.sh"),
                             "9", check=False)
 
     def test_legacy_dispatch_creates_canonical_worktree(self):
         self.stub_workers()
         result = self.dispatch()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(Path(self.env["WORKER_CWD"]).read_text().strip(),
-                         str(self.root / ".claude/worktrees/issue-9"))
+        # The fake worker wrote `pwd -P` (an MSYS path on Windows); compare the same directory.
+        self.assertTrue(os.path.samefile(native_path(Path(self.env["WORKER_CWD"]).read_text().strip()),
+                                         self.root / ".claude/worktrees/issue-9"))
         self.assertFalse((self.root / ".worktrees").exists())
 
     def test_legacy_checkout_is_not_abandoned_or_clobbered(self):
@@ -78,8 +86,8 @@ class WorktreePaths(unittest.TestCase):
         self.assertFalse(Path(self.env["WORKER_CWD"]).exists())
 
     def runner_helper(self, body):
-        return self.run_cmd("bash", "-c", 'SB_LIB_ONLY=1 . "$1"\n' + body, "fixture",
-                            str(PACK / "scripts/super-board-run.sh"), check=False)
+        return self.run_cmd(BASH, "-c", 'SB_LIB_ONLY=1 . "$1"\n' + body, "fixture",
+                            bash_path(PACK / "scripts/super-board-run.sh"), check=False)
 
     def test_runner_halts_for_legacy_checkout_without_removing_it(self):
         old = self.root / ".worktrees/issue-7-build"
@@ -179,14 +187,14 @@ new AsyncFunction('args','agent','pipeline','log',src)(
                 command = "git worktree add -b issue-7-" + lane + " " + shlex.quote(path) + " main"
                 payload = json.dumps({"tool_name": "Bash", "cwd": str(self.root),
                                       "tool_input": {"command": command}})
-                verdict = self.run_cmd("python3", str(PACK / "hooks/guard-worktree-path.py"),
+                verdict = self.run_cmd(sys.executable, str(PACK / "hooks/guard-worktree-path.py"),
                                        input=payload).stdout
                 self.assertEqual(verdict, "", "the installed guard must allow the lane's command")
                 self.run_cmd(*shlex.split(command))
                 for meta in (self.root / ".git/worktrees").iterdir():
                     for name in ("gitdir", "commondir"):
                         os.utime(meta / name, (1577836800, 1577836800))
-                self.run_cmd("python3", str(PACK / "hooks/cleanup-wt.py"), "--post-merge",
+                self.run_cmd(sys.executable, str(PACK / "hooks/cleanup-wt.py"), "--post-merge",
                              "--no-fetch", "--base", "main", input="")
                 self.assertFalse((self.root / path).exists(), "cleanup must see the lane's worktree")
 

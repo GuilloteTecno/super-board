@@ -7,6 +7,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _compat import BASH, symlink_or_skip  # noqa: E402
 
 KIT = Path(__file__).resolve().parents[1]
 CLI = KIT / 'scripts/super-board-project-verifier.py'
@@ -92,10 +95,11 @@ class ProjectVerifier(unittest.TestCase):
             path = self.root / name
             original = path.read_bytes()
             path.write_text(''); self.run_cli(expected=9)
-            path.write_bytes(original); path.chmod(0)
-            self.run_cli(expected=9)
+            path.write_bytes(original)
+            if os.name != 'nt':  # chmod(0) does not make a file unreadable on Windows
+                path.chmod(0); self.run_cli(expected=9)
             path.chmod(0o644); path.unlink(); self.run_cli(expected=9)
-            path.symlink_to(self.root / 'absent'); self.run_cli(expected=9)
+            symlink_or_skip(self, path, self.root / 'absent'); self.run_cli(expected=9)
             path.unlink(); path.write_bytes(original)
         self.data['features'][0]['owners'] = ['missing/*.py']
         self.save(); self.run_cli(expected=9)
@@ -111,7 +115,7 @@ class ProjectVerifier(unittest.TestCase):
         self.save()
         outside = Path(self.temp.name) / 'outside'; outside.mkdir()
         (outside / 'file.py').write_text('private')
-        (self.root / 'escape').symlink_to(outside, target_is_directory=True)
+        symlink_or_skip(self, self.root / 'escape', outside, target_is_directory=True)
         self.run_cli('select', ['escape/file.py'], expected=9)
         self.data['features'][0]['owners'] = ['escape/*.py']
         self.save(); self.run_cli(expected=9)
@@ -139,7 +143,7 @@ class ProjectVerifier(unittest.TestCase):
         self.assertNotEqual(initial['inputs']['map'], self.run_cli()['inputs']['map'])
 
     def test_installed_helper_inspects_project_without_creating_verifier_coverage(self):
-        process = subprocess.run(['bash', str(KIT / 'install.sh'), '--no-hooks', str(self.root)],
+        process = subprocess.run([BASH, str(KIT / 'install.sh'), '--no-hooks', str(self.root)],
                                  capture_output=True, text=True)
         self.assertEqual(process.returncode, 0, process.stderr)
         installed = self.root / '.claude/bin/super-board-project-verifier.py'
@@ -153,7 +157,7 @@ class ProjectVerifier(unittest.TestCase):
 
     def test_root_symlink_loop_returns_setup_error_without_traceback(self):
         loop = Path(self.temp.name) / 'loop'
-        loop.symlink_to(loop, target_is_directory=True)
+        symlink_or_skip(self, loop, loop, target_is_directory=True)
         result = self.run_cli(extra=['--root', str(loop)], expected=9)
         self.assertFalse(result['valid'])
 

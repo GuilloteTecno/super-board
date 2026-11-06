@@ -26,6 +26,13 @@
 #     are the orchestrator's job. This script just runs the worker and reports outcome.
 #   - The worktree is left intact in all exit paths so a human can inspect it.
 
+# Windows: `python3` may be a Store stub; use the resolved interpreter when the resolver ships alongside.
+for _sb_py_lib in "$(dirname "${BASH_SOURCE[0]}")"/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../scripts/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../bin/super-board-python.sh; do
+  [ -f "$_sb_py_lib" ] || continue
+  . "$_sb_py_lib"; [ -n "${SB_PYTHON:-}" ] || sb_python_init 2>/dev/null || true
+  break
+done
+unset _sb_py_lib
 set -uo pipefail
 
 N="${1:-}"
@@ -97,15 +104,15 @@ fi
 
 # Compose the worker prompt: preamble + issue body + working-dir footer
 SB_BIN="$REPO_DIR/.claude/bin"
-ISSUE_JSON=$(python3 "$SB_BIN/super-board-github-read.py" --kind issue -- issue view "$N" --json number,title,body 2>&1) || {
+ISSUE_JSON=$("${SB_PYTHON:-python3}" "$SB_BIN/super-board-github-read.py" --kind issue -- issue view "$N" --json number,title,body 2>&1) || {
   echo "error: gh issue view #$N failed:" >&2
   echo "$ISSUE_JSON" >&2
   exit 79
 }
-LABELS_JSON=$(python3 "$SB_BIN/super-board-github-read.py" --kind json -- issue view "$N" --json labels) || exit $?
+LABELS_JSON=$("${SB_PYTHON:-python3}" "$SB_BIN/super-board-github-read.py" --kind json -- issue view "$N" --json labels) || exit $?
 CARD_JSON=$(printf '%s' "$ISSUE_JSON" | jq -c --argjson labels "$LABELS_JSON" '[{number:.number,status:"Ready",body:.body,labels:($labels.labels // [])}]')
 SKILLS_RC=0
-printf '%s' "$CARD_JSON" | python3 "$SB_BIN/super-board-skills-ready.py" --root "$REPO_DIR" --host claude --cards - --lane build || SKILLS_RC=$?
+printf '%s' "$CARD_JSON" | "${SB_PYTHON:-python3}" "$SB_BIN/super-board-skills-ready.py" --root "$REPO_DIR" --host claude --cards - --lane build || SKILLS_RC=$?
 [ "$SKILLS_RC" -eq 0 ] || exit "$SKILLS_RC"
 mkdir -p "$LOG_DIR"
 

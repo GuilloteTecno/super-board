@@ -23,9 +23,9 @@ cat > "$WORK/gh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$GH_LOG"
 case "$*" in
-  "api -X PATCH repos/{owner}/{repo}/pulls/"*" --input -") jq -j .body > "$BODY" ;;
+  "api -X PATCH repos/{owner}/{repo}/pulls/"*" --input -") jq -jb .body > "$BODY" ;;
   "api repos/{owner}/{repo}/pulls/"*)
-    jq -n --arg h "$HEAD_OID" --rawfile b "$BODY" '{head: {sha: $h}, body: $b}' | jq '{headRefOid: .head.sha, body: (.body // "")}' ;;
+    jq -nb --arg h "$HEAD_OID" --rawfile b "$BODY" '{head: {sha: $h}, body: $b}' | jq -b '{headRefOid: .head.sha, body: (.body // "")}' ;;
   *) echo "unexpected gh call: $*" >&2; exit 1 ;;
 esac
 STUB
@@ -130,7 +130,9 @@ has "skeleton folds the history" "$SK" "<details><summary>Iteration history</sum
 
 echo "── time in config timezone"
 echo '{"timezone":"UTC"}' > "$WORK/cfg.json"
-has "time carries the zone" "$("$SCRIPT" --time --config "$WORK/cfg.json")" "UTC"
+# MSYS date prints TZ=UTC as "GMT"; the zone is still carried.
+ZNAME=UTC; case "$(uname -s)" in MINGW*|MSYS*) ZNAME=GMT ;; esac
+has "time carries the zone" "$("$SCRIPT" --time --config "$WORK/cfg.json")" "$ZNAME"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

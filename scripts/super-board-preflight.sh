@@ -44,6 +44,13 @@
 #
 # Exit 0 ok · 64 usage · 79 required GitHub evidence unavailable (pause the run;
 # a blind pre-flight never says proceed).
+# Windows: `python3` may be a Store stub; use the resolved interpreter when the resolver ships alongside.
+for _sb_py_lib in "$(dirname "${BASH_SOURCE[0]}")"/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../scripts/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../bin/super-board-python.sh; do
+  [ -f "$_sb_py_lib" ] || continue
+  . "$_sb_py_lib"; [ -n "${SB_PYTHON:-}" ] || sb_python_init 2>/dev/null || true
+  break
+done
+unset _sb_py_lib
 set -euo pipefail
 # Fixed read commands: a malformed payload is GitHub's, so it halts (#32).
 export SB_GITHUB_READ_STRICT=1
@@ -69,15 +76,15 @@ if [ -f "$HERE/super-board-gh-guard.sh" ]; then
   sb_gh_guard_check 200 || exit $?
 fi
 
-MERGED=$(python3 "$HERE/super-board-github-read.py" --kind prs-merged -- pr list --repo "$REPO" --state merged --limit 100 --json number,title,body,url ) || exit $?
-OPEN=$(python3 "$HERE/super-board-github-read.py" --kind prs-open -- pr list --repo "$REPO" --state open --limit 100 --json number,title,body,url,headRefName,files ) || exit $?
-CLOSED=$(python3 "$HERE/super-board-github-read.py" --kind issues-closed -- issue list --repo "$REPO" --state closed --limit 100 --json number,title,body,stateReason ) || exit $?
+MERGED=$("${SB_PYTHON:-python3}" "$HERE/super-board-github-read.py" --kind prs-merged -- pr list --repo "$REPO" --state merged --limit 100 --json number,title,body,url ) || exit $?
+OPEN=$("${SB_PYTHON:-python3}" "$HERE/super-board-github-read.py" --kind prs-open -- pr list --repo "$REPO" --state open --limit 100 --json number,title,body,url,headRefName,files ) || exit $?
+CLOSED=$("${SB_PYTHON:-python3}" "$HERE/super-board-github-read.py" --kind issues-closed -- issue list --repo "$REPO" --state closed --limit 100 --json number,title,body,stateReason ) || exit $?
 CARDS="[]"
 [ -n "$INFLIGHT" ] && CARDS=$(cat "$INFLIGHT")
 
 TARGETS="[]"
 for n in ${ISSUES//,/ }; do
-  one=$(python3 "$HERE/super-board-github-read.py" --kind issue -- issue view "$n" --repo "$REPO" --json number,title,body ) || exit $?
+  one=$("${SB_PYTHON:-python3}" "$HERE/super-board-github-read.py" --kind issue -- issue view "$n" --repo "$REPO" --json number,title,body ) || exit $?
   TARGETS=$(jq -c --argjson one "$one" '. + [$one]' <<<"$TARGETS")
 done
 

@@ -18,6 +18,21 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 INSTALL="../install.sh"
+# shellcheck source=../scripts/super-board-python.sh
+. ../scripts/super-board-python.sh
+sb_python_init || exit 1
+
+# Real symlinks need rights on Windows (Developer Mode / admin). Scenarios that build or
+# assert links run only where the host can make them; the copy fallback (19, 26) always runs.
+export MSYS=winsymlinks:nativestrict
+SYMLINKS=0
+_probe=$(mktemp -d)
+if ( cd "$_probe" && : > target && ln -s target link 2>/dev/null && [ -L link ] ); then SYMLINKS=1; fi
+rm -rf "$_probe"
+# The interpreter name installed hook commands use: python3 when it runs, else the resolved one.
+HOOKPY=python3
+{ command -v python3 >/dev/null 2>&1 && _sb_py_ok python3; } || HOOKPY=$SB_PYTHON
+skip_nolinks() { echo "SKIP: $1 (symlinks unavailable here)"; }
 
 fail() { echo "FAIL: $1" >&2; exit 1; }
 plant_decoys() { for d in decoy-one decoy-two decoy-three; do mkdir -p "$1/.claude/skills/$d"; touch "$1/.claude/skills/$d/SKILL.md"; done; }
@@ -41,6 +56,7 @@ for w in super-board-wave.js ui-refine-loop.js; do
 done
 rm -rf "$T"
 
+if [ "$SYMLINKS" = 1 ]; then
 # 2 — a project that symlinks .claude/skills/<name> at a real tree elsewhere.
 #     The symlink must survive, the content must land at the target, and the
 #     neighbours must be untouched.
@@ -163,6 +179,7 @@ diff -qr "$T/expected-skills" "$PACK/skills" >/dev/null || fail "nested destinat
 echo "$OUT" | grep -q 'overlap' || fail "nested source overlap should be explained: $OUT"
 decoys_intact "$T" || fail "nested destination: DECOYS DESTROYED"
 rm -rf "$T"
+else skip_nolinks "scenarios 2-4e"; fi
 
 # 5 — every dispatcher script the skills reference is actually shipped. A verb
 #     whose script was never installed fails only when a user reaches for it.
@@ -225,7 +242,7 @@ rm -rf "$T"
 T=$(mktemp -d)
 "$INSTALL" --no-hooks --protect-main "$T" >/dev/null 2>&1
 [ "$(ls "$T/.claude/hooks")" = "guard-protected-push.py" ] || fail "--no-hooks --protect-main should install only the push guard, got: $(ls "$T/.claude/hooks")"
-jq -e '[.hooks[][].hooks[].command] == ["python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-protected-push.py"]' "$T/.claude/settings.json" >/dev/null \
+jq -e --arg py "$HOOKPY" '[.hooks[][].hooks[].command] == [$py + " \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-protected-push.py"]' "$T/.claude/settings.json" >/dev/null \
   || fail "--no-hooks --protect-main should wire only the push guard"
 rm -rf "$T"
 
@@ -299,9 +316,14 @@ rm -rf "$T"
 #      links. No .codex/ or .opencode/ unless that host is configured, detected or asked for.
 resolves() { # <target> <host> — host paths reach the .agents/ copy
   for p in skills/super-board/SKILL.md skills/git-sync/SKILL.md bin/super-board-host.sh workflows/super-board-wave.js; do
-    [ "$1/.$2/$p" -ef "$1/.agents/$p" ] || fail "$2: $p does not resolve to .agents/$p"
+    if [ "$SYMLINKS" = 1 ]; then
+      [ "$1/.$2/$p" -ef "$1/.agents/$p" ] || fail "$2: $p does not resolve to .agents/$p"
+    else # copy mode: same content is what "resolves" can mean
+      cmp -s "$1/.$2/$p" "$1/.agents/$p" || fail "$2: $p differs from .agents/$p"
+    fi
   done
 }
+if [ "$SYMLINKS" = 1 ]; then
 T=$(mktemp -d)
 OUT=$("$INSTALL" "$T" 2>&1)
 [ -d "$T/.agents/skills/super-board" ] && [ ! -L "$T/.agents/skills/super-board" ] || fail "fresh: .agents/skills/super-board should be a real directory"
@@ -314,6 +336,7 @@ resolves "$T" claude
 [ ! -e "$T/.codex" ] && [ ! -e "$T/.opencode" ] || fail "fresh: no host was asked for, yet .codex/ or .opencode/ appeared"
 echo "$OUT" | grep -q "✓ skills, scripts and workflows → .agents/ (linked from .claude)" || fail "fresh: grouped line should name .agents/ and the hosts, got: $OUT"
 rm -rf "$T"
+else skip_nolinks "scenario 13"; fi
 
 # 14 — --hosts adds hosts (claude is always kept); both flag forms; unknown names refused.
 T=$(mktemp -d)
@@ -346,6 +369,7 @@ rm -rf "$T"
 
 # 16 — upgrade a real-directory .claude/ install: every path it had still resolves, super-board's
 #      own entries become links, anything that is not super-board's stays exactly as it was.
+if [ "$SYMLINKS" = 1 ]; then
 T=$(mktemp -d)
 mkdir -p "$T/.claude/skills/super-board" "$T/.claude/skills/super-qa" "$T/.claude/skills/other-skill" \
          "$T/.claude/bin" "$T/.claude/workflows" "$T/.claude/hooks"
@@ -366,9 +390,10 @@ done
 [ ! -e "$T/.agents/skills/other-skill" ] || fail "upgrade: other-skill must not move into .agents/"
 jq -e '.from == "1.8.2"' "$T/.claude/super-board/upgrade.json" >/dev/null || fail "upgrade: upgrade.json not recorded"
 rm -rf "$T"
+else skip_nolinks "scenario 16"; fi
 
 # 17 — a second run changes nothing (tree, link targets, file contents).
-snapshot() { python3 - "$1" <<'PY'
+snapshot() { "$SB_PYTHON" - "$1" <<'PY'
 import hashlib, os, sys
 root = sys.argv[1]
 for d, dirs, files in sorted(os.walk(root)):
@@ -388,6 +413,7 @@ rm -rf "$T"
 
 # 18 — a host folder whose skills/ (or bin/) is itself a link into .agents/ is already shared:
 #      nothing is replaced, nothing loops, the neighbours survive.
+if [ "$SYMLINKS" = 1 ]; then
 T=$(mktemp -d); mkdir -p "$T/.agents/skills" "$T/.agents/bin" "$T/.claude"
 ln -s ../.agents/skills "$T/.claude/skills"; ln -s ../.agents/bin "$T/.claude/bin"
 plant_decoys "$T"
@@ -396,6 +422,7 @@ plant_decoys "$T"
 [ -f "$T/.claude/skills/super-board/SKILL.md" ] && [ -x "$T/.claude/bin/super-board-run.sh" ] || fail "whole-folder link: files missing"
 decoys_intact "$T" || fail "whole-folder link: DECOYS DESTROYED"
 rm -rf "$T"
+else skip_nolinks "scenario 18"; fi
 
 # 19 — no symlinks (Windows without symlink rights): copy instead, so every path still resolves.
 T=$(mktemp -d); FAKE=$(mktemp -d)
@@ -409,11 +436,39 @@ done
 echo "$OUT" | grep -q "copied" || fail "no-symlink install should say it copied, got: $OUT"
 rm -rf "$T" "$FAKE"
 
+# 25 — python3 is a broken stub (Windows Store, exit 9009): hook commands written into
+#      settings.json must use the interpreter that works, and re-installing is a no-op.
+T=$(mktemp -d); FAKE=$(mktemp -d)
+REALPY=$(command -v "$SB_PYTHON")
+printf '#!/bin/sh\nexit 9\n' > "$FAKE/python3"
+printf '#!/bin/sh\nexec "%s" "$@"\n' "$REALPY" > "$FAKE/python"
+chmod +x "$FAKE/python3" "$FAKE/python"
+OUT=$(env -u SB_PYTHON PATH="$FAKE:$PATH" "$INSTALL" "$T" 2>&1) || fail "stub-python3 install failed: $OUT"
+HOOKCMDS=$(grep '"command"' "$T/.claude/settings.json")
+OUT=$(env -u SB_PYTHON PATH="$FAKE:$PATH" "$INSTALL" "$T" 2>&1) || fail "stub-python3 re-install failed: $OUT"
+[ "$(grep '"command"' "$T/.claude/settings.json")" = "$HOOKCMDS" ] || fail "stub python3: re-install changed or duplicated hook commands"
+echo "$HOOKCMDS" | grep -q 'python3 ' && fail "stub python3: settings.json still calls python3: $HOOKCMDS"
+echo "$HOOKCMDS" | grep -q '"python ' || fail "stub python3: hook commands should start with 'python ': $HOOKCMDS"
+[ -f "$T/.claude/bin/super-board-python.sh" ] || fail "resolver was not installed into bin/"
+rm -rf "$T" "$FAKE"
+
+# 26 — copy mode re-install leaves identical content and no nested copies.
+T=$(mktemp -d); FAKE=$(mktemp -d)
+printf '#!/bin/sh
+exit 1
+' > "$FAKE/ln"; chmod +x "$FAKE/ln"
+PATH="$FAKE:$PATH" "$INSTALL" "$T" >/dev/null 2>&1 || fail "copy-mode first install failed"
+SNAP=$(mktemp -d); cp -R "$T/.claude" "$SNAP/claude"
+PATH="$FAKE:$PATH" "$INSTALL" "$T" >/dev/null 2>&1 || fail "copy-mode re-install failed"
+diff -r "$SNAP/claude" "$T/.claude" >/dev/null || fail "copy-mode re-install changed content"
+[ ! -d "$T/.claude/skills/super-board/super-board" ] || fail "copy-mode re-install nested a directory"
+rm -rf "$T" "$FAKE" "$SNAP"
+
 # 9 — the snippet the installer merges is the one hooks/README.md documents.
-python3 - ../hooks/README.md ../hooks/settings-snippet.json <<'PY' || fail "hooks/README.md snippet and hooks/settings-snippet.json differ"
+"$SB_PYTHON" - ../hooks/README.md ../hooks/settings-snippet.json <<'PY' || fail "hooks/README.md snippet and hooks/settings-snippet.json differ"
 import json, re, sys
 doc = re.search(r"```json\n(.*?)```", open(sys.argv[1]).read(), re.S).group(1)
 sys.exit(0 if json.loads(doc) == json.load(open(sys.argv[2])) else 1)
 PY
 
-echo "PASS: test-install.sh (24 scenarios)"
+echo "PASS: test-install.sh (26 scenarios)"

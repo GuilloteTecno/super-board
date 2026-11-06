@@ -30,13 +30,20 @@
 # with the same tool family that recorded the PID. Workers are started with `nohup claude -p ... &`
 # (no subshell, no `exec` of a native PE), so `$!` names the worker itself rather than a bash stub.
 
+# Windows: `python3` may be a Store stub; use the resolved interpreter when the resolver ships alongside.
+for _sb_py_lib in "$(dirname "${BASH_SOURCE[0]}")"/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../scripts/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../bin/super-board-python.sh; do
+  [ -f "$_sb_py_lib" ] || continue
+  . "$_sb_py_lib"; [ -n "${SB_PYTHON:-}" ] || sb_python_init 2>/dev/null || true
+  break
+done
+unset _sb_py_lib
 set -euo pipefail
 SB_GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-read.py"
-gh_checkpoint() { python3 "$SB_GITHUB_READ" --check || exit $?; }
+gh_checkpoint() { "${SB_PYTHON:-python3}" "$SB_GITHUB_READ" --check || exit $?; }
 gh_write_once() {
   gh_checkpoint
   gh "$@" || {
-    python3 "$SB_GITHUB_READ" --halt "GitHub $1 $2 response failed; reconcile the write before restarting" >&2 || true
+    "${SB_PYTHON:-python3}" "$SB_GITHUB_READ" --halt "GitHub $1 $2 response failed; reconcile the write before restarting" >&2 || true
     exit 79
   }
 }
@@ -97,7 +104,7 @@ if [ "$WORKER_BACKEND" != "claude-p" ]; then
   exit 78
 fi
 
-python3 "$(dirname "$SB_GITHUB_READ")/super-board-verification-ready.py" --config "$CONFIG_PATH"
+"${SB_PYTHON:-python3}" "$(dirname "$SB_GITHUB_READ")/super-board-verification-ready.py" --config "$CONFIG_PATH"
 
 RUN_DATE=$(date +%Y-%m-%d)
 RUN_MANIFEST="docs/super-board/runs/${RUN_DATE}-${CONFIG_SLUG}.md"
@@ -140,7 +147,7 @@ STATUS_OPTIONS_JSON=""
 resolve_status_field() {
   [ -n "$STATUS_FIELD_ID" ] && return 0
   local payload
-  payload=$(python3 "$SB_GITHUB_READ" --kind fields -- project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json) || return $?
+  payload=$("${SB_PYTHON:-python3}" "$SB_GITHUB_READ" --kind fields -- project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json) || return $?
   STATUS_FIELD_ID=$(echo "$payload" | jq -r '.fields[] | select(.name == "Status") | .id')
   STATUS_OPTIONS_JSON=$(echo "$payload" | jq -c '.fields[] | select(.name == "Status") | .options')
   [ -n "$STATUS_FIELD_ID" ] && [ "$STATUS_FIELD_ID" != "null" ]
@@ -173,7 +180,7 @@ PROJECT_NODE_ID=""
 project_node_id() {
   if [ -z "$PROJECT_NODE_ID" ]; then
     local payload
-    payload=$(python3 "$SB_GITHUB_READ" --kind project -- project view "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json) || return $?
+    payload=$("${SB_PYTHON:-python3}" "$SB_GITHUB_READ" --kind project -- project view "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json) || return $?
     PROJECT_NODE_ID=$(echo "$payload" | jq -r .id)
   fi
   echo "$PROJECT_NODE_ID"
@@ -183,7 +190,7 @@ issue_is_open() {
   # $1 = issue number. Returns 0 when OPEN, 1 when CLOSED.
   # Unreadable is distinct from both OPEN and CLOSED: exit 79 halts the run.
   local state
-  state=$(python3 "$SB_GITHUB_READ" --kind state -- issue view "$1" --json state -q '.state') || return 79
+  state=$("${SB_PYTHON:-python3}" "$SB_GITHUB_READ" --kind state -- issue view "$1" --json state -q '.state') || return 79
   [ "$state" != "CLOSED" ]
 }
 
@@ -273,7 +280,7 @@ lane_idle() {
 gh_rate_guard() {
   # Sleep until rate limit resets if GraphQL remaining < 200.
   local payload remaining reset now wait
-  payload=$(python3 "$SB_GITHUB_READ" --kind quota -- api rate_limit) || return $?
+  payload=$("${SB_PYTHON:-python3}" "$SB_GITHUB_READ" --kind quota -- api rate_limit) || return $?
   # REST misreports the GraphQL bucket; super-board-gh-guard.sh → sb_gh_quota_merge.
   payload=$(. "$(dirname "$SB_GITHUB_READ")/super-board-gh-guard.sh" && sb_gh_quota_merge "$payload")
   remaining=$(echo "$payload" | jq -r '.resources.graphql.remaining // 5000')
@@ -325,7 +332,7 @@ dispatch_lane() {
   card=$(echo "$PROJECT_ITEMS_JSON" | jq -c --argjson n "$issue" --arg lane "$lane" '
     [.items[] | select(.content.number == $n) | {number:$n, status:(.status // "Ready"), labels:(.labels // .content.labels // []), lane:$lane}]')
   [ "$(printf '%s' "$card" | jq length)" -eq 1 ] || { log "skills-readiness: selected issue #${issue} missing from board cache"; exit 64; }
-  skills_report=$(printf '%s' "$card" | python3 "$(dirname "$SB_GITHUB_READ")/super-board-skills-ready.py"     --root "$PWD" --host claude --cards - --hydrate) || skills_rc=$?
+  skills_report=$(printf '%s' "$card" | "${SB_PYTHON:-python3}" "$(dirname "$SB_GITHUB_READ")/super-board-skills-ready.py"     --root "$PWD" --host claude --cards - --hydrate) || skills_rc=$?
   if [ "$skills_rc" -ne 0 ]; then
     log "skills-readiness: halt before claim lane=${lane} issue=#${issue}; ${skills_report}"
     exit "$skills_rc"
@@ -582,7 +589,7 @@ fi
 # locks, worktrees, claims, and approval evidence for explicit recovery.
 halt_cleanup() {
   local rc=$?
-  if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ] || ! python3 "$SB_GITHUB_READ" --check >/dev/null 2>&1; then
+  if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ] || ! "${SB_PYTHON:-python3}" "$SB_GITHUB_READ" --check >/dev/null 2>&1; then
     for pid in "${BUILD_PID:-}" "${QA_PID:-}" "${REVIEW_PID:-}"; do
       [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null || true
     done
@@ -644,7 +651,7 @@ QA_PID=""; QA_ISSUE=""
 REVIEW_PID=""; REVIEW_ISSUE=""
 
 while true; do
-  python3 "$(dirname "$SB_GITHUB_READ")/super-board-verification-ready.py" --config "$CONFIG_PATH"
+  "${SB_PYTHON:-python3}" "$(dirname "$SB_GITHUB_READ")/super-board-verification-ready.py" --config "$CONFIG_PATH"
   gh_checkpoint
   # Workflow-backend mutual exclusion, re-checked every tick: the startup
   # check alone leaves a TOCTOU window where a workflow run starting at the

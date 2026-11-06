@@ -5,12 +5,21 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows: the collector locks with msvcrt, so the test holds it the same way
+    fcntl = None
+    import msvcrt
 import hashlib
 import time
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _compat import BASH, bash_path  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 ROUTER = ROOT/'skills/super-collect/scripts/super-collect-file.sh'
+SLOW = 6 if os.name == 'nt' else 1  # process creation under Git Bash is several times slower
+ROUTER_CMD = [BASH, bash_path(ROUTER)] if os.name == 'nt' else [str(ROUTER)]  # Windows cannot exec a .sh
 BODY = '''## Problem
 PRIVATE_NOTE_DO_NOT_STORE: the request fails.
 ## Context
@@ -75,14 +84,14 @@ class IntakeTests(unittest.TestCase):
         (self.root/'body.md').write_text(BODY)
         cfg={'project':{'owner':'acme','number':7,'title':'Board'},'repo':{'remote':'https://github.com/acme/app.git','path':'.'}}
         (self.root/'config.json').write_text(json.dumps(cfg));(self.root/'other.json').write_text(json.dumps(cfg))
-        self.env=dict(os.environ,PATH=str(self.root)+':'+os.environ['PATH'],FIXTURE_ROOT=str(self.root),
+        self.env=dict(os.environ,PATH=str(self.root)+os.pathsep+os.environ['PATH'],FIXTURE_ROOT=str(self.root),
             SUPER_BOARD_BIN=str(ROOT/'scripts'),SB_GITHUB_HALT_FILE=str(self.root/'halt.json'),
             SB_GITHUB_RETRY_DELAY='0',SB_COLLECT_STATE_DIR=str(self.root/'collector-state'))
-        self.argv=[str(ROUTER),'--config',str(self.root/'config.json'),'--type','feature','--source','custom',
+        self.argv=ROUTER_CMD+['--config',str(self.root/'config.json'),'--type','feature','--source','custom',
             '--title','Fix request','--body-file',str(self.root/'body.md'),'--fingerprint','custom|demo|one','--yes']
     def tearDown(self):self.tmp.cleanup()
     def run_filer(self,**env):
-        return subprocess.run(self.argv,env=dict(self.env,**env),cwd=self.root,capture_output=True,text=True,timeout=15)
+        return subprocess.run(self.argv,env=dict(self.env,**env),cwd=self.root,capture_output=True,text=True,timeout=SLOW*15)
     def calls(self):
         p=self.root/'calls.jsonl';return [json.loads(x) for x in p.read_text().splitlines()] if p.exists() else []
     def mutations(self):
@@ -110,7 +119,8 @@ class IntakeTests(unittest.TestCase):
         state=self.root/'collector-state';state.mkdir()
         key=hashlib.sha256(b'acme/app').hexdigest()
         with (state/(key+'.lock')).open('w') as lock:
-            fcntl.flock(lock,fcntl.LOCK_EX)
+            if fcntl: fcntl.flock(lock,fcntl.LOCK_EX)
+            else: lock.seek(0);msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
             before=time.monotonic();result=self.run_filer(SB_COLLECT_LOCK_TIMEOUT='.05')
             self.assertEqual(result.returncode,4,result.stderr)
             self.assertLess(time.monotonic()-before,3)
@@ -137,9 +147,9 @@ class IntakeTests(unittest.TestCase):
     def test_concurrent_configs_create_once(self):
         env=dict(self.env,CREATE_DELAY='.25')
         a=subprocess.Popen(self.argv,env=env,cwd=self.root,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-        other=list(self.argv);other[2]=str(self.root/'other.json')
+        other=list(self.argv);other[other.index('--config')+1]=str(self.root/'other.json')
         b=subprocess.Popen(other,env=env,cwd=self.root,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-        ao,ae=a.communicate(timeout=15);bo,be=b.communicate(timeout=15)
+        ao,ae=a.communicate(timeout=SLOW*15);bo,be=b.communicate(timeout=SLOW*15)
         self.assertEqual(a.returncode,0,ae);self.assertEqual(b.returncode,0,be)
         self.assertEqual(ao.strip(),bo.strip())
         self.assertEqual(sum(c[:2]==['issue','create'] for c in self.calls()),1)
@@ -159,12 +169,12 @@ class IntakeTests(unittest.TestCase):
         self.assertEqual(sum(c[:2]==['issue','create'] for c in self.calls()),1)
     def test_already_on_board_adopt_never_moves_active_card(self):
         (self.root/'board.json').write_text(json.dumps([{'id':'item','content':{'type':'Issue','title':'Active','number':5,'url':'https://github.com/acme/app/issues/5'},'status':'Building'}]))
-        self.argv=[str(ROUTER),'--config',str(self.root/'config.json'),'--adopt','5','--type','feature','--yes']
+        self.argv=ROUTER_CMD+['--config',str(self.root/'config.json'),'--adopt','5','--type','feature','--yes']
         result=self.run_filer();self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual(self.mutations(),[])
     def test_missing_board_url_cannot_reset_matching_active_card(self):
         (self.root/'board.json').write_text(json.dumps([{'id':'item','content':{'type':'Issue','title':'Active','number':5},'status':'Building'}]))
-        self.argv=[str(ROUTER),'--config',str(self.root/'config.json'),'--adopt','5','--type','feature','--yes']
+        self.argv=ROUTER_CMD+['--config',str(self.root/'config.json'),'--adopt','5','--type','feature','--yes']
         result=self.run_filer()
         self.assertEqual(result.returncode,79,result.stderr)
         self.assertEqual(self.mutations(),[])

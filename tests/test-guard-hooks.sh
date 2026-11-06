@@ -3,6 +3,11 @@
 # A deny prints a PreToolUse permissionDecision; an allow prints nothing.
 # Fake keys are assembled at runtime so this file never holds a key-shaped literal.
 set -euo pipefail
+# python3 may be a Windows Store stub: put a working `python3` shim on PATH (also covers shebangs).
+. "$(dirname "${BASH_SOURCE[0]}")/../scripts/super-board-python.sh"; sb_python_init || exit 1
+sb_python_shim
+# Fixture repos: never inherit a global core.autocrlf=true (it rewrites checked-out files to CRLF).
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.autocrlf GIT_CONFIG_VALUE_0=false
 cd "$(dirname "$0")"
 H="../hooks"
 PASS=0
@@ -74,6 +79,8 @@ rm -f "$TMPF"
 
 # ---- guard-worktree-path ----------------------------------------------------
 REPO=$(mktemp -d); REPO=$(cd "$REPO" && pwd -P)
+# The hook is a native Python process on Windows: give it a path it can resolve (C:/...), not MSYS /tmp/....
+if command -v cygpath >/dev/null 2>&1; then REPO=$(cygpath -m "$REPO"); fi
 git -C "$REPO" init -q
 expect deny  guard-worktree-path.py "$(bash_cmd 'git worktree add ../proj-feature -b feat' "$REPO")"     "sibling worktree"
 expect deny  guard-worktree-path.py "$(bash_cmd 'mkdir -p /tmp/wt && git worktree add /tmp/wt/x' "$REPO")" "absolute outside path"
@@ -115,6 +122,8 @@ rm -rf "$REPO"
 # ---- guard-delete-outside ----------------------------------------------------
 # A project path outside every temp root (mktemp lives under one); nothing is created or run.
 PROJ=/work/sb-guard-proj
+# /work is drive-relative on Windows (it lands under Git's root); give the hook a real drive path.
+case "$(uname -s)" in MINGW*|MSYS*) PROJ=C:/work/sb-guard-proj ;; esac
 dd() { CLAUDE_PROJECT_DIR="$PROJ" expect "$1" guard-delete-outside.py "$(bash_cmd "$2" "${4:-$PROJ}")" "$3"; }
 dd deny  'rm -rf /'                                "root"
 dd deny  'rm -rf ~'                                "home"

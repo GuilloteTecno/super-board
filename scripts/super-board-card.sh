@@ -36,6 +36,13 @@
 # Exit: 0 ok · 64 usage · 66 config · 69 GitHub read/mutation failed ·
 #       79 reads halted (super-board-github-read.py) · 3 issue not on this board /
 #       Status option missing.
+# Windows: `python3` may be a Store stub; use the resolved interpreter when the resolver ships alongside.
+for _sb_py_lib in "$(dirname "${BASH_SOURCE[0]}")"/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../scripts/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../bin/super-board-python.sh; do
+  [ -f "$_sb_py_lib" ] || continue
+  . "$_sb_py_lib"; [ -n "${SB_PYTHON:-}" ] || sb_python_init 2>/dev/null || true
+  break
+done
+unset _sb_py_lib
 set -euo pipefail
 # Fixed read commands: a malformed payload is GitHub's, so it halts (#32).
 export SB_GITHUB_READ_STRICT=1
@@ -72,7 +79,7 @@ REPO=$(echo "$REPO" | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\
 # board read shares the run's halt file; plain gh otherwise.
 gh_read() {
   if [ -f "$HERE/super-board-github-read.py" ]; then
-    python3 "$HERE/super-board-github-read.py" --kind json -- "$@"
+    "${SB_PYTHON:-python3}" "$HERE/super-board-github-read.py" --kind json -- "$@"
   else
     gh "$@"
   fi

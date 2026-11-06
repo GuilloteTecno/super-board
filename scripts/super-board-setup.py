@@ -105,10 +105,44 @@ def out(obj, code=0):
     return code
 
 
+# Bare "bash" can resolve to the WSL launcher in System32 on Windows; resolve via PATH.
+BASH = shutil.which("bash") or "bash"
+
+
+def msys_command(argv):
+    """One command line for a bash child. A native process starting MSYS bash.exe has its command
+    line re-parsed (unquoted [ ] { } * ? are globbed), so single-quote every argument that is
+    not plainly safe."""
+    safe = re.compile(r"^[A-Za-z0-9_./:=,+@%-]+$")
+    quote = lambda a: a if a and safe.match(a) else "'" + a.replace("'", "'\"'\"'") + "'"
+    return " ".join([subprocess.list2cmdline([argv[0]])] + [quote(a) for a in argv[1:]])
+
+
+def gh_argv(cmd):
+    """Windows only: a bare 'gh' only finds gh.exe. Look through PATH for gh.exe/.cmd/.bat, let
+    bash execute an extensionless script wrapper (shebang honoured), and fall back to the
+    GitHub CLI install folder."""
+    if os.name != "nt" or not cmd or cmd[0] != "gh":
+        return cmd
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        for name in ("gh.exe", "gh.cmd", "gh.bat", "gh"):
+            candidate = os.path.join(folder, name)
+            if folder and os.path.isfile(candidate):
+                if name != "gh":
+                    return [candidate, *cmd[1:]]
+                return msys_command([BASH, "-c", 'exec "$0" "$@"', candidate, *cmd[1:]])
+    for root in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")):
+        candidate = os.path.join(root or "", "GitHub CLI", "gh.exe")
+        if root and os.path.isfile(candidate):
+            return [candidate, *cmd[1:]]
+    return cmd
+
+
 def run(cmd, cwd=None, check=False, input=None):
+    cmd = gh_argv(cmd)
     r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, input=input)
     if check and r.returncode != 0:
-        raise RuntimeError(f"{' '.join(cmd[:3])} failed: {(r.stderr or r.stdout).strip()[:300]}")
+        raise RuntimeError(f"{cmd[:60] if isinstance(cmd, str) else ' '.join(cmd[:3])} failed: {(r.stderr or r.stdout).strip()[:300]}")
     return r
 
 
@@ -401,7 +435,7 @@ def fix(root, pack, helpers=True, dry=False, host="claude", home=None, catalog=N
         if not pack:
             return {**before, "fixed": [], "error": "pack-not-found"}
         if not dry:
-            r = run(["bash", os.path.join(pack, "install.sh"), root],
+            r = run([BASH, os.path.join(pack, "install.sh"), root],
                     input="", cwd=root)
             if r.returncode != 0:
                 return {**before, "fixed": fixed, "error": "install.sh failed: " + (r.stderr or r.stdout)[-300:]}
@@ -445,7 +479,7 @@ def fix(root, pack, helpers=True, dry=False, host="claude", home=None, catalog=N
 
     if helpers and not before["helper_skills"] and have("npx"):
         if not dry:
-            r = run(["bash", "-c", HELPERS_CMD], cwd=root, input="")
+            r = run([BASH, "-c", HELPERS_CMD], cwd=root, input="")
             confirmed = helper_readiness(root, host, home, catalog)
             if confirmed["ready"]:
                 fixed.append("worker skills re-resolved after helper installation")
@@ -457,7 +491,7 @@ def fix(root, pack, helpers=True, dry=False, host="claude", home=None, catalog=N
 
     if helpers and not before["security_audit"] and have("npx"):
         if not dry:
-            run(["bash", "-c", SECURITY_AUDIT_CMD], cwd=root, input="")
+            run([BASH, "-c", SECURITY_AUDIT_CMD], cwd=root, input="")
             if security_audit_present(root, helper_readiness(root, host, home, catalog)):
                 fixed.append("security-audit skill installed (Cloudflare, optional)")
             else:

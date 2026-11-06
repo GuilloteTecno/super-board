@@ -3,6 +3,9 @@
 # step: detection, backup, the managed block (nothing outside the markers ever
 # changes), the CLAUDE.md pointer, rule-unit splitting and the lossless check.
 set -euo pipefail
+# python3 may be a Windows Store stub: put a working `python3` shim on PATH (also covers shebangs).
+. "$(dirname "${BASH_SOURCE[0]}")/../scripts/super-board-python.sh"; sb_python_init || exit 1
+sb_python_shim
 cd "$(dirname "$0")"
 AM="$PWD/../scripts/super-board-agents-md.py"
 fail() { echo "FAIL: $1" >&2; exit 1; }

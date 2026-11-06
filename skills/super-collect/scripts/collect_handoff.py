@@ -115,11 +115,11 @@ def doc(args):
         n += 1
     if not args.yes:
         sys.stdout.write(text)
-        print(f"collect-handoff: dry run — would write {out}", file=sys.stderr)
+        print(f"collect-handoff: dry run — would write {out.as_posix()}", file=sys.stderr)
         return 0
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text)
-    print(out)
+    print(out.as_posix())  # forward slashes everywhere, so callers and docs agree on Windows
     return 0
 
 

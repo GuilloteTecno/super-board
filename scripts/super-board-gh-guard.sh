@@ -16,6 +16,13 @@
 #   sb_gh_guard_summary       # log remaining quota; safe to call frequently
 #
 # Constants
+# Windows: `python3` may be a Store stub; use the resolved interpreter when the resolver ships alongside.
+for _sb_py_lib in "$(dirname "${BASH_SOURCE[0]}")"/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../scripts/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../bin/super-board-python.sh; do
+  [ -f "$_sb_py_lib" ] || continue
+  . "$_sb_py_lib"; [ -n "${SB_PYTHON:-}" ] || sb_python_init 2>/dev/null || true
+  break
+done
+unset _sb_py_lib
 SB_GH_GUARD_MIN_REMAINING_DEFAULT=200
 SB_GH_GUARD_REST_MIN_REMAINING=500
 SB_GH_GUARD_BUDGET_DEFAULT=150     # per-worker soft cap on gh calls
@@ -25,8 +32,8 @@ SB_GH_GUARD_STATE_FILE="${SB_GH_GUARD_STATE_FILE:-${TMPDIR:-/tmp}/super-board-gh
 # This file's own path: BASH_SOURCE under bash, the %x prompt escape under zsh.
 if [ -n "${BASH_SOURCE[0]:-}" ]; then _sb_guard_src="${BASH_SOURCE[0]}"; else eval '_sb_guard_src="${(%):-%x}"'; fi
 SB_GITHUB_READ="$(cd "$(dirname "$_sb_guard_src")" && pwd)/super-board-github-read.py"; unset _sb_guard_src
-sb_gh_required_read() { local kind="$1"; shift; python3 "$SB_GITHUB_READ" --kind "$kind" -- "$@"; }
-sb_gh_halt_check() { python3 "$SB_GITHUB_READ" --check; }
+sb_gh_required_read() { local kind="$1"; shift; "${SB_PYTHON:-python3}" "$SB_GITHUB_READ" --kind "$kind" -- "$@"; }
+sb_gh_halt_check() { "${SB_PYTHON:-python3}" "$SB_GITHUB_READ" --check; }
 
 # `gh api rate_limit` (REST) misreports the GraphQL bucket. Measured 2026-10-04,
 # back to back on one token: REST said graphql used=2 remaining=4998 while

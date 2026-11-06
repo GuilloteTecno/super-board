@@ -1,8 +1,8 @@
 # Releasing super-board
 
 Push a version tag to run the release workflow. GitHub creates the release only after
-all safety suites pass on Linux and macOS, and the status-reader checks pass on Windows,
-Linux and macOS. Failed, cancelled or skipped checks prevent the publish job from running.
+all safety suites pass on Linux, macOS and Windows (Git Bash), and the status-reader checks
+pass on Windows, Linux and macOS. Failed, cancelled or skipped checks prevent the publish job from running.
 No release is created on pull requests or ordinary branch pushes.
 
 1. Update `VERSION` and `RELEASE-NOTES.md` in a reviewed commit.
@@ -30,7 +30,13 @@ run twice. Keep these tests offline and deterministic; paid agent evaluations be
 Dependencies: Bash, Python 3, Git, jq, Node.js, curl and tar. GitHub's Linux/macOS runners
 provide the command-line utilities; the safety workflow tests Python 3.9 and 3.12 with
 Node.js 22.
-Windows coverage remains limited to the Python status reader.
+Windows runs the same safety gate under Git for Windows (`shell: bash`). Needs on Windows:
+Git for Windows (Git Bash), a real Python 3 (`python` or `py -3`; the Microsoft Store `python3`
+stub is detected and skipped by `scripts/super-board-python.sh`), jq and Node.js. Real
+symlinks need Developer Mode (or an elevated shell); without that right the installer copies
+instead and says so, and the install scenarios that assert symlinks print `SKIP` (the copy-mode
+scenarios still run). GitHub's Windows runners can create symlinks, so CI runs all of them.
+Override the interpreter with `SB_PYTHON=/path/to/python`.
 
 Loopback HTTP test fixtures use a fixed local server name and skip reverse DNS.
 Runtime fixture failures print the report and app startup logs. Failed safety jobs also
@@ -76,6 +82,8 @@ safety (ubuntu-latest / py3.9)
 safety (ubuntu-latest / py3.12)
 safety (macos-latest / py3.9)
 safety (macos-latest / py3.12)
+safety (windows-latest / py3.9)
+safety (windows-latest / py3.12)
 smoke (ubuntu-latest / py3.9)
 smoke (ubuntu-latest / py3.10)
 smoke (ubuntu-latest / py3.12)

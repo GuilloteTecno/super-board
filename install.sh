@@ -32,6 +32,16 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Windows (Git Bash/MSYS): ask for real symlinks so link_entry links when Developer Mode
+# allows it; without the right, `ln` fails and link_entry falls back to copying.
+case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*) export MSYS=winsymlinks:nativestrict ;; esac
+
+# A python3 that actually runs ($SB_PYTHON); on Windows `python3` is often a Store stub.
+# shellcheck source=scripts/super-board-python.sh
+. "$REPO_ROOT/scripts/super-board-python.sh"
+sb_python_init || { echo "Python 3 is required but no working interpreter was found" >&2; exit 69; }
+
 HOOKS=1
 PROTECT=0
 TARGET=""
@@ -73,7 +83,7 @@ for h in $(echo "$ASKED_HOSTS" | tr ',' ' '); do
   esac
 done
 for h in codex opencode; do [ ! -d "$TARGET/.$h" ] || add_host "$h"; done
-for h in $(python3 - "$TARGET/.claude/super-board/configs" <<'PY'
+for h in $("$SB_PYTHON" - "$TARGET/.claude/super-board/configs" <<'PY'
 import glob, json, os, sys
 for p in sorted(glob.glob(os.path.join(sys.argv[1], "*.json"))):
     try:
@@ -113,7 +123,7 @@ echo "🔧 installing"
 # Resolve all skill paths before replacing anything. A destination can contain
 # the pack (or a linked source skill); clearing it would destroy our input.
 # A destination inside its source would instead recursively copy into itself.
-python3 - "$REPO_ROOT" "$TARGET" "$HOSTS" $PRIMARY_SKILLS $SECONDARY_SKILLS <<'PY'
+"$SB_PYTHON" - "$REPO_ROOT" "$TARGET" "$HOSTS" $PRIMARY_SKILLS $SECONDARY_SKILLS <<'PY'
 from pathlib import Path
 import sys
 
@@ -189,7 +199,7 @@ copy_file() {
 # Relative path from a host folder (physical) to the shared folder, so links
 # survive a moved or freshly cloned project. Prints e.g. ../../.agents/skills.
 relpath() {
-  python3 - "$1" "$2" <<'PY'
+  "$SB_PYTHON" - "$1" "$2" <<'PY'
 import os, sys
 print(os.path.relpath(os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])))
 PY
@@ -226,7 +236,7 @@ for skill in $PRIMARY_SKILLS $SECONDARY_SKILLS; do
   install_skill "$skill" "$SHARED/skills/$skill" || true
 done
 
-SCRIPTS="super-board-project-verifier.py super-board-skills-ready.py super-board-calibration.py super-board-verification-ready.py super-board-github-read.py super-board-collect-state.py super-board-run.sh super-board-gh-guard.sh super-board-card.sh super-board-status.py super-board-wave-plan.sh super-board-lane.sh super-board-codex-lane.sh super-board-codex-wave.sh super-board-deps.sh super-board-preflight.sh super-board-merge-gate.sh super-board-merge-policy.py super-board-approval.py super-board-env-check.sh super-board-agents-md.py super-board-settings.py super-board-setup.py super-board-usage.sh super-board-throttle.sh super-board-host.sh super-board-pr-body.sh super-review-file-refactor.sh super-qa-file-bug.sh super-board-stop.sh"
+SCRIPTS="super-board-python.sh super-board-project-verifier.py super-board-skills-ready.py super-board-calibration.py super-board-verification-ready.py super-board-github-read.py super-board-collect-state.py super-board-run.sh super-board-gh-guard.sh super-board-card.sh super-board-status.py super-board-wave-plan.sh super-board-lane.sh super-board-codex-lane.sh super-board-codex-wave.sh super-board-deps.sh super-board-preflight.sh super-board-merge-gate.sh super-board-merge-policy.py super-board-approval.py super-board-env-check.sh super-board-agents-md.py super-board-settings.py super-board-setup.py super-board-usage.sh super-board-throttle.sh super-board-host.sh super-board-pr-body.sh super-review-file-refactor.sh super-qa-file-bug.sh super-board-stop.sh"
 for script in $SCRIPTS; do
   if [ -f "$REPO_ROOT/scripts/$script" ]; then
     copy_file "$REPO_ROOT/scripts/$script" "$SHARED/bin/$script"
@@ -287,23 +297,41 @@ SETTINGS_PY="$REPO_ROOT/scripts/super-board-settings.py"
 merge_settings() {
   local had=0 res rc=0
   [ -f "$TARGET/.claude/settings.json" ] && had=1
-  res=$(python3 "$SETTINGS_PY" hooks "$TARGET/.claude/settings.json" "$@" 2>&1) || rc=$?
+  res=$("$SB_PYTHON" "$SETTINGS_PY" hooks "$TARGET/.claude/settings.json" "$@" 2>&1) || rc=$?
   if [ "$rc" -eq 2 ]; then printf '%s\n' "$res" >&2; echo "not valid JSON — left untouched"
   elif echo "$res" | grep -q "already present"; then echo "already present"
   elif [ "$had" -eq 1 ]; then echo "backup kept"
   else echo "new file"; fi
 }
 
+# Hook commands in the snippets say `python3`. When python3 doesn't run here (Windows Store
+# stub), write the interpreter that does instead; elsewhere the snippet is used untouched.
+SNIPPET_TMP=$(mktemp -d)
+trap 'rm -rf "$SNIPPET_TMP"' EXIT
+hook_snippet() {
+  local src="$1" cmd="$SB_PYTHON" dst="$SNIPPET_TMP/$(basename "$1")"
+  if command -v python3 >/dev/null 2>&1 && _sb_py_ok python3; then printf '%s\n' "$src"; return 0; fi
+  case "$cmd" in *[[:space:]]*) cmd="\\\"$cmd\\\"" ;; esac
+  "$SB_PYTHON" - "$src" "$dst" "$cmd" <<'PY'
+import sys
+src, dst, cmd = sys.argv[1:4]
+text = open(src, encoding="utf-8").read().replace('"python3 ', '"' + cmd + ' ').replace('&& python3 ', '&& ' + cmd + ' ')
+with open(dst, "w", encoding="utf-8", newline="\n") as f:
+    f.write(text)
+PY
+  printf '%s\n' "$dst"
+}
+
 if [ "$HOOKS" -eq 1 ]; then
   set -- $HOOK_FILES; n=$#
-  SNIPPETS="$REPO_ROOT/hooks/settings-snippet.json"
-  if [ "$PROTECT" -eq 1 ]; then SNIPPETS="$SNIPPETS $REPO_ROOT/hooks/settings-protect-main.json"; fi
+  SNIPPETS="$(hook_snippet "$REPO_ROOT/hooks/settings-snippet.json")"
+  if [ "$PROTECT" -eq 1 ]; then SNIPPETS="$SNIPPETS $(hook_snippet "$REPO_ROOT/hooks/settings-protect-main.json")"; fi
   # shellcheck disable=SC2086
   echo "   🛡️  $n guard hooks → .claude/settings.json ($(merge_settings $SNIPPETS))"
 elif [ "$PROTECT" -eq 1 ]; then
   # --no-hooks --protect-main: the one guard asked for, nothing else. This is the
   # command onboard names when its protect-main question finds no guard script.
-  echo "   🛡️  --no-hooks: only the push guard → .claude/settings.json ($(merge_settings "$REPO_ROOT/hooks/settings-protect-main.json"))"
+  echo "   🛡️  --no-hooks: only the push guard → .claude/settings.json ($(merge_settings "$(hook_snippet "$REPO_ROOT/hooks/settings-protect-main.json")"))"
 else
   echo "   ⏭️  guard hooks skipped (--no-hooks)"
 fi
@@ -311,7 +339,7 @@ fi
 # AGENTS.md: a re-install refreshes the managed super-board block and touches
 # nothing outside its markers. No block yet → onboard writes it (with consent).
 if [ -f "$TARGET/AGENTS.md" ] && grep -q '^<!-- super-board:begin' "$TARGET/AGENTS.md"; then
-  python3 "$REPO_ROOT/scripts/super-board-agents-md.py" block --root "$TARGET" \
+  "$SB_PYTHON" "$REPO_ROOT/scripts/super-board-agents-md.py" block --root "$TARGET" \
     --template "$REPO_ROOT/skills/super-board/references/agents-md-block.md" \
     --version "$PACK_VERSION" >/dev/null 2>&1 \
     && echo "   📜 AGENTS.md: super-board block refreshed" \
@@ -324,7 +352,7 @@ fi
 # Upgrade record for onboard's 🔍 Checks (it migrates config, labels, columns).
 if [ -n "$PREV_VERSION" ] && [ "$PREV_VERSION" != "$PACK_VERSION" ]; then
   mkdir -p "$TARGET/.claude/super-board"
-  python3 - "$TARGET/.claude/super-board/upgrade.json" "$PREV_VERSION" "$PACK_VERSION" $ADDED_SKILLS <<'PY'
+  "$SB_PYTHON" - "$TARGET/.claude/super-board/upgrade.json" "$PREV_VERSION" "$PACK_VERSION" $ADDED_SKILLS <<'PY'
 import json, sys, time
 path, frm, to, added = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
 try:

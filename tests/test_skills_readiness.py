@@ -6,6 +6,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _compat import symlink_or_skip  # noqa: E402
 
 KIT = Path(__file__).resolve().parents[1]
 CLI = KIT / 'scripts/super-board-skills-ready.py'
@@ -73,7 +76,7 @@ class Readiness(unittest.TestCase):
         self.run_cli(host='codex', expected=10)
         directory = self.root / '.agents/skills'; directory.mkdir(parents=True)
         for name in ['tdd', 'implement', 'codebase-design', 'code-review', 'diagnosing-bugs', 'verification-before-completion', 'testing-strategy']:
-            (directory / name).symlink_to(self.root / '.claude/skills' / name, target_is_directory=True)
+            symlink_or_skip(self, directory / name, self.root / '.claude/skills' / name, target_is_directory=True)
         result = self.run_cli(host='codex')
         self.assertTrue(all(Path(e['resolved_path']).is_file() for e in result['entries'] if e['status'] == 'resolved'))
 
@@ -81,8 +84,9 @@ class Readiness(unittest.TestCase):
         self.full()
         path = self.root / '.claude/skills/code-review/SKILL.md'
         path.write_text(' \n'); self.run_cli(expected=10)
-        path.write_text('instructions'); path.chmod(0); self.run_cli(expected=10)
-        path.chmod(0o644); path.unlink(); path.symlink_to(self.root / 'missing'); self.run_cli(expected=10)
+        if os.name != 'nt':  # chmod(0) does not make a file unreadable on Windows
+            path.write_text('instructions'); path.chmod(0); self.run_cli(expected=10)
+        path.chmod(0o644); path.unlink(); symlink_or_skip(self, path, self.root / 'missing'); self.run_cli(expected=10)
         path.unlink(); path.mkdir(); self.run_cli(expected=10)
 
     def test_user_roots(self):
@@ -262,7 +266,7 @@ class Readiness(unittest.TestCase):
         config.write_text('[[skills.config]]\npath = ' + json.dumps(str(path)) + '\nenabled = true\n')
         self.run_cli(host='codex')
         target = self.root / 'actual-tdd.md'; target.write_text('real target')
-        path.unlink(); path.symlink_to(target)
+        path.unlink(); symlink_or_skip(self, path, target)
         config.write_text("[[skills.config]]\npath = '" + str(target) + "'\nenabled = false\n")
         self.run_cli(host='codex', expected=10)
         config.write_text('[[skills.config]]\npath = ' + json.dumps(str(path)) + '\nenabled = false\n')

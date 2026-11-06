@@ -37,6 +37,13 @@
 # Stdout: the issue number — new, or the existing one on a fingerprint hit.
 # Exits:  0 ok · 64 bad args · 66 unreadable/weak body · 70 GH API failure
 #         71 issue filed but board promote failed (number still on stdout)
+# Windows: `python3` may be a Store stub; use the resolved interpreter when the resolver ships alongside.
+for _sb_py_lib in "$(dirname "${BASH_SOURCE[0]}")"/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../scripts/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../bin/super-board-python.sh; do
+  [ -f "$_sb_py_lib" ] || continue
+  . "$_sb_py_lib"; [ -n "${SB_PYTHON:-}" ] || sb_python_init 2>/dev/null || true
+  break
+done
+unset _sb_py_lib
 set -uo pipefail
 
 TITLE=""; BODY_FILE=""; KIND="bug"; PRIORITY="medium"; CATEGORY=""
@@ -145,17 +152,17 @@ if [ -z "$FINGERPRINT" ]; then
 fi
 
 GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-read.py"
-python3 "$GITHUB_READ" --check || exit $?
+"${SB_PYTHON:-python3}" "$GITHUB_READ" --check || exit $?
 
 # --- project resolution -----------------------------------------------------
 OWNER="${SUPER_QA_PROJECT_OWNER:-}"
 if [ -z "$OWNER" ]; then
-  OWNER=$(python3 "$GITHUB_READ" --kind scalar -- repo view --json owner -q .owner.login) || exit $?
+  OWNER=$("${SB_PYTHON:-python3}" "$GITHUB_READ" --kind scalar -- repo view --json owner -q .owner.login) || exit $?
 fi
 PROJECT_TITLE="${SUPER_QA_PROJECT_TITLE:-Super Ultimate QA}"
 TARGET_COLUMN="${SUPER_QA_TARGET_OPTION_NAME:-Bug}"
 
-PROJECT_LIST=$(python3 "$GITHUB_READ" --kind projects -- project list --owner "$OWNER" --format json) || exit $?
+PROJECT_LIST=$("${SB_PYTHON:-python3}" "$GITHUB_READ" --kind projects -- project list --owner "$OWNER" --format json) || exit $?
 NUMBER=$(echo "$PROJECT_LIST" | jq -r --arg t "$PROJECT_TITLE" \
   '[.projects[] | select((.title // "" | ascii_downcase) == ($t | ascii_downcase))] | first | .number // empty')
 # Do NOT silently fall back to the repo's primary project — its columns mean
@@ -165,18 +172,18 @@ NUMBER=$(echo "$PROJECT_LIST" | jq -r --arg t "$PROJECT_TITLE" \
 # --- dedupe -----------------------------------------------------------------
 REPO_NAME="${SUPER_QA_REPO:-}"
 if [ -z "$REPO_NAME" ]; then
-  REPO_NAME=$(python3 "$GITHUB_READ" --kind scalar -- repo view --json nameWithOwner --jq .nameWithOwner) || exit $?
+  REPO_NAME=$("${SB_PYTHON:-python3}" "$GITHUB_READ" --kind scalar -- repo view --json nameWithOwner --jq .nameWithOwner) || exit $?
 fi
 REPO_FLAG=(-R "$REPO_NAME")
-ISSUES_JSON=$(python3 "$GITHUB_READ" --issue-history "$REPO_NAME") || exit $?
+ISSUES_JSON=$("${SB_PYTHON:-python3}" "$GITHUB_READ" --issue-history "$REPO_NAME") || exit $?
 EXISTING=$(printf '%s' "$ISSUES_JSON" | jq -r --arg fingerprint "$FINGERPRINT" '[.[] | select(.state == "OPEN" and any(.body | splits("\\s+"); . == $fingerprint)) | .number] | first // empty')
 
 
 if [ -n "$EXISTING" ]; then
-  python3 "$GITHUB_READ" --check || exit $?
+  "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || exit $?
   gh issue comment "$EXISTING" "${REPO_FLAG[@]}" --body "Seen again${ITER:+ on iteration ${ITER}}.
 
-${BODY_RAW}" >/dev/null 2>&1 || { python3 "$GITHUB_READ" --halt "Comment outcome unknown for #${EXISTING}; inspect before retrying"; exit 79; }
+${BODY_RAW}" >/dev/null 2>&1 || { "${SB_PYTHON:-python3}" "$GITHUB_READ" --halt "Comment outcome unknown for #${EXISTING}; inspect before retrying"; exit 79; }
   echo "$EXISTING"
   exit 0
 fi
@@ -240,15 +247,15 @@ if [ -n "$SUGGESTED_SKILL" ]; then LABELS+=("skill:${SUGGESTED_SKILL}"); fi
 # `gh issue create` hard-fails on an unknown label, which would lose the finding
 # entirely. Create them best-effort first.
 for l in "${LABELS[@]}"; do
-  python3 "$GITHUB_READ" --check || exit $?
+  "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || exit $?
   gh label create "$l" "${REPO_FLAG[@]}" --color D93F0B --force >/dev/null 2>&1 || true
 done
 LABEL_ARGS=()
 for l in "${LABELS[@]}"; do LABEL_ARGS+=(--label "$l"); done
 
-python3 "$GITHUB_READ" --check || exit $?
+"${SB_PYTHON:-python3}" "$GITHUB_READ" --check || exit $?
 ISSUE_URL=$(gh issue create "${REPO_FLAG[@]}" --title "$FULL_TITLE" --body-file "$BODY_TMP" "${LABEL_ARGS[@]}") \
-  || { python3 "$GITHUB_READ" --halt "Issue creation response failed; reconcile fingerprint ${FINGERPRINT} before retrying"; exit 79; }
+  || { "${SB_PYTHON:-python3}" "$GITHUB_READ" --halt "Issue creation response failed; reconcile fingerprint ${FINGERPRINT} before retrying"; exit 79; }
 ISSUE_N=$(basename "$ISSUE_URL")
 
 # --- promote onto the board -------------------------------------------------
@@ -256,10 +263,10 @@ ISSUE_N=$(basename "$ISSUE_URL")
 # exit 71 tells the caller "filed, needs a manual move" rather than losing it.
 promote() {
   local item_id project_id field_json field_id option_id
-  python3 "$GITHUB_READ" --check || return $?
-  item_id=$(gh project item-add "$NUMBER" --owner "$OWNER" --url "$ISSUE_URL" --format json --jq '.id') || { python3 "$GITHUB_READ" --halt "Project item add outcome unknown for issue #${ISSUE_N}; reconcile before retrying"; return 79; }
-  project_id=$(python3 "$GITHUB_READ" --kind scalar -- project view "$NUMBER" --owner "$OWNER" --format json --jq '.id') || return $?
-  field_json=$(python3 "$GITHUB_READ" --kind fields -- project field-list "$NUMBER" --owner "$OWNER" --format json) || return $?
+  "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || return $?
+  item_id=$(gh project item-add "$NUMBER" --owner "$OWNER" --url "$ISSUE_URL" --format json --jq '.id') || { "${SB_PYTHON:-python3}" "$GITHUB_READ" --halt "Project item add outcome unknown for issue #${ISSUE_N}; reconcile before retrying"; return 79; }
+  project_id=$("${SB_PYTHON:-python3}" "$GITHUB_READ" --kind scalar -- project view "$NUMBER" --owner "$OWNER" --format json --jq '.id') || return $?
+  field_json=$("${SB_PYTHON:-python3}" "$GITHUB_READ" --kind fields -- project field-list "$NUMBER" --owner "$OWNER" --format json) || return $?
   field_id=$(echo "$field_json" | jq -r '.fields[] | select(.name=="Status") | .id')
   # The requested name first, then the conventional aliases. A QA bug arrives
   # WITH a repro and evidence, so Ready is an honest fallback for it — unlike a
@@ -279,15 +286,15 @@ promote() {
     fi
   done
   [ -n "$option_id" ] && [ "$option_id" != "null" ] || { echo "warn: no '${TARGET_COLUMN}' column and no alias (Bug, Ready, Todo, Backlog, Triage) on the Status field" >&2; return 1; }
-  python3 "$GITHUB_READ" --check || return $?
+  "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || return $?
   gh project item-edit --id "$item_id" --project-id "$project_id" \
-    --field-id "$field_id" --single-select-option-id "$option_id" >/dev/null || { python3 "$GITHUB_READ" --halt "Project column move outcome unknown for issue #${ISSUE_N}; reconcile before retrying"; return 79; }
+    --field-id "$field_id" --single-select-option-id "$option_id" >/dev/null || { "${SB_PYTHON:-python3}" "$GITHUB_READ" --halt "Project column move outcome unknown for issue #${ISSUE_N}; reconcile before retrying"; return 79; }
 }
 
 if promote; then
   echo "$ISSUE_N"
 else
-  python3 "$GITHUB_READ" --check || { echo "$ISSUE_N"; exit 79; }
+  "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || { echo "$ISSUE_N"; exit 79; }
   echo "warn: #${ISSUE_N} filed but not moved to '${TARGET_COLUMN}' on ${OWNER}/${NUMBER} — manual move required" >&2
   echo "$ISSUE_N"
   exit 71

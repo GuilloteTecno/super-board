@@ -10,13 +10,21 @@
 # A missing, unknown or not-yet-built backend exits 64 and names the valid ones.
 # Shared here: input checks, readiness/GitHub gates, lane prompt, result schema and
 # validation, signal handling. Per host: one class in BACKENDS below.
+# Windows: `python3` may be a Store stub; use the resolved interpreter when the resolver ships alongside.
+for _sb_py_lib in "$(dirname "${BASH_SOURCE[0]}")"/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../scripts/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../bin/super-board-python.sh; do
+  [ -f "$_sb_py_lib" ] || continue
+  . "$_sb_py_lib"; [ -n "${SB_PYTHON:-}" ] || sb_python_init 2>/dev/null || true
+  break
+done
+unset _sb_py_lib
 set -euo pipefail
-exec python3 - "${BASH_SOURCE[0]}" "$@" <<'PY'
+exec "${SB_PYTHON:-python3}" - "${BASH_SOURCE[0]}" "$@" <<'PY'
 import argparse
 import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -236,6 +244,7 @@ with tempfile.TemporaryDirectory(prefix=f'super-board-{backend.name}-') as tempo
     run['schema_path'].write_text(json.dumps(schema))
     command, stdin = backend.command(run)
     try:
+        command = [shutil.which(command[0]) or command[0], *command[1:]]  # Windows: finds codex.cmd/.exe
         child = subprocess.Popen(command, stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
                                  stdout=subprocess.PIPE if backend.capture_stdout else sys.stderr, text=True)
         stdout, _ = child.communicate(stdin)
