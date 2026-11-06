@@ -1,12 +1,27 @@
 #!/usr/bin/env python3
 # Stubbed `codex exec` for the offline Codex lane/wave suites; behaviour set by SB_CODEX_TEST_* env vars.
-import fcntl, json, os, re, subprocess, sys, time
+import json, os, re, subprocess, sys, time
+try:
+    import fcntl
+except ImportError:  # Windows: lock the first byte of the log instead
+    fcntl = None
+    import msvcrt
+
+
+def lock(log):
+    if fcntl:
+        fcntl.flock(log, fcntl.LOCK_EX)
+    else:
+        log.seek(0)
+        msvcrt.locking(log.fileno(), msvcrt.LK_LOCK, 1)
+
+
 from pathlib import Path
 args = sys.argv[1:]
 prompt = sys.stdin.read()
 if 'Grade complexity' in prompt:
     with open(os.environ['SB_CODEX_TEST_LOG'], 'a') as log:
-        fcntl.flock(log, fcntl.LOCK_EX)
+        lock(log)
         log.write(json.dumps(dict(args=args, number=int(re.search(r'issue #(\d+)', prompt).group(1)), lane='grade', active=1)) + '\n')
     output = Path(args[args.index('--output-last-message') + 1])
     output.write_text(json.dumps(dict(complexity=os.environ.get('SB_CODEX_TEST_GRADE', 'medium'))))
@@ -14,7 +29,7 @@ if 'Grade complexity' in prompt:
 card = json.loads(re.search(r'^Card: (.+)$', prompt, re.M).group(1))
 lane = re.search(r'Run super-(build|qa|review)', prompt).group(1)
 with open(os.environ['SB_CODEX_TEST_LOG'], 'a') as log:
-    fcntl.flock(log, fcntl.LOCK_EX)
+    lock(log)
     counter = Path(os.environ['SB_CODEX_TEST_LOG'] + '.active')
     active = int(counter.read_text()) + 1 if counter.exists() else 1
     counter.write_text(str(active))
@@ -35,6 +50,6 @@ else:
     output.write_text(json.dumps(dict(status=status, column=column, detail=os.environ.get('SB_CODEX_TEST_DETAIL', 'stub lane result'), prUrl=None, branch=None, priorFindings=None)))
 print('codex log noise must not appear in result stdout')
 with open(os.environ['SB_CODEX_TEST_LOG'], 'a') as log:
-    fcntl.flock(log, fcntl.LOCK_EX)
+    lock(log)
     counter.write_text(str(int(counter.read_text()) - 1))
 sys.exit(int(os.environ.get('SB_CODEX_TEST_EXIT', '0')))

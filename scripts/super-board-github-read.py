@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -55,6 +56,40 @@ FORMS = {
                'comments(last:8){ nodes{ body } } } } } }\' -F owner=<owner> -F repo=<repo> '
                '(see .claude/bin/super-board-deps.sh; not issue list)'),
 }
+
+
+
+def gh_argv(args):
+    """Full command for one gh call. A bash-run wrapper is an MSYS program: started from a native
+    process its command line is re-parsed (unquoted [ ] { } * ? are globbed, '{owner}' becomes
+    'owner'), so build the line with single quotes around every argument that is not plainly safe."""
+    prefix = gh_command()
+    if len(prefix) == 1:
+        return [*prefix, *args]
+    safe = re.compile(r'^[A-Za-z0-9_./:=,+@%-]+$')
+    quote = lambda a: a if a and safe.match(a) else "'" + a.replace("'", "'\"'\"'") + "'"
+    return ' '.join([subprocess.list2cmdline([prefix[0]])] + [quote(a) for a in [*prefix[1:], *args]])
+
+
+def gh_command():
+    """argv prefix that runs gh. On Windows a bare 'gh' only finds gh.exe, so look through PATH
+    ourselves: gh.exe/.cmd/.bat run as-is, an extensionless script with a shebang (Git Bash users,
+    test fakes) is executed by bash, which honours the shebang, and the GitHub CLI install folder is the last resort."""
+    if os.name != 'nt':
+        return ['gh']
+    for folder in os.environ.get('PATH', '').split(os.pathsep):
+        for name in ('gh.exe', 'gh.cmd', 'gh.bat', 'gh'):
+            candidate = os.path.join(folder, name)
+            if folder and os.path.isfile(candidate):
+                if name != 'gh':
+                    return [candidate]
+                bash = shutil.which('bash')
+                return [bash, '-c', 'exec "$0" "$@"', candidate] if bash else [candidate]
+    for root in (os.environ.get('ProgramFiles'), os.environ.get('ProgramFiles(x86)')):
+        candidate = os.path.join(root or '', 'GitHub CLI', 'gh.exe')
+        if root and os.path.isfile(candidate):
+            return [candidate]
+    return ['gh']
 
 
 def halt_path():
@@ -327,7 +362,7 @@ def read(args, kind='json', meta=None, recovering=False):
         if not recovering:
             check_halt()
         try:
-            result = subprocess.run(['gh', *args], capture_output=True, timeout=30)
+            result = subprocess.run(gh_argv(args), capture_output=True, timeout=30)
             # Decode by hand: text=True turns a lone \r inside a diff line into \n.
             result.stdout = result.stdout.decode('utf-8', 'replace')
             result.stderr = result.stderr.decode('utf-8', 'replace')
@@ -407,11 +442,13 @@ def main():
             owner, repo = args.issue_history.split('/')
             query = 'query($owner:String!,$repo:String!,$endCursor:String){repository(owner:$owner,name:$repo){issues(first:100,after:$endCursor,states:[OPEN,CLOSED]){totalCount pageInfo{hasNextPage endCursor} nodes{number state body}}}}'
             _, pages = read(['api','graphql','--paginate','--slurp','-f','query='+query,'-F','owner='+owner,'-F','repo='+repo], 'issue-history')
-            print(json.dumps([n for page in pages for n in page['data']['repository']['issues']['nodes']]))
+            sys.stdout.buffer.write((json.dumps([n for page in pages for n in page['data']['repository']['issues']['nodes']]) + '\n').encode('utf-8'))
             return 0
         meta = json.loads(Path(args.meta).read_text()) if args.meta else None
         output, _ = read(command, args.kind or 'json', meta)
-        sys.stdout.write(output)
+        sys.stdout.flush()
+        sys.stdout.buffer.write(output.encode('utf-8'))  # bytes: Windows text mode would turn every LF into CRLF
+        sys.stdout.flush()
         return 0
     except ReadHalted as error:
         print(f'[github-read] HALT: {error}. Saved at {halt_path()}', file=sys.stderr)

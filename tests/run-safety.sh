@@ -4,9 +4,23 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-for tool in bash python3 git jq node curl tar; do
+for tool in bash git jq node curl tar; do
   command -v "$tool" >/dev/null || { echo "Missing test dependency: $tool" >&2; exit 1; }
 done
+# shellcheck source=../scripts/super-board-python.sh
+. "$(pwd)/scripts/super-board-python.sh"
+sb_python_init || exit 1
+# python3 broken (Windows Store stub)? Give child shells and shebangs a working `python3` too.
+_had_shim=${SB_PYTHON_SHIM_DIR:-}
+sb_python_shim || exit 1
+if [ -z "$_had_shim" ] && [ -n "${SB_PYTHON_SHIM_DIR:-}" ]; then
+  trap 'rm -rf "$SB_PYTHON_SHIM_DIR"' EXIT
+fi
+
+# SB_SUITE_TIMEOUT=<seconds> bounds each suite (a hung suite fails instead of stalling the gate).
+run_suite() {
+  if [ -n "${SB_SUITE_TIMEOUT:-}" ] && command -v timeout >/dev/null 2>&1; then timeout "$SB_SUITE_TIMEOUT" "$@"; else "$@"; fi
+}
 
 shopt -s nullglob
 suites=(tests/test-*.sh tests/test_*.py)
@@ -15,8 +29,8 @@ failed=()
 for suite in "${suites[@]}"; do
   echo "::group::$suite"
   case "$suite" in
-    *.sh) bash "$suite" ;;
-    *.py) python3 "$suite" ;;
+    *.sh) run_suite bash "$suite" ;;
+    *.py) run_suite "$SB_PYTHON" "$suite" ;;
   esac
   rc=$?
   echo '::endgroup::'

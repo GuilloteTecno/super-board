@@ -10,6 +10,8 @@ import sys
 import tempfile
 import time
 import unittest
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _compat import BASH  # noqa: E402
 
 KIT = Path(os.environ.get('SB_TEST_PACK', Path(__file__).resolve().parents[1]))
 NAMES = ['super-board','super-build','super-qa','super-review','super-collect','visual','git-sync','ui-refine-loop','pr-security-review',
@@ -63,6 +65,8 @@ output.write_text(json.dumps(result))
     def tool(self,name,source):
         compile(source, name, 'exec')
         path=self.bin/name;path.write_text('#!/usr/bin/env python3\n'+source);path.chmod(0o755)
+        if os.name=='nt':  # CreateProcess cannot run an extensionless script: a .cmd beside it, ahead of any real CLI on PATH
+            (self.bin/(name+'.cmd')).write_text('@"'+sys.executable+'" "%~dp0'+name+'" %*\r\n')
 
     def full(self,host='codex'):
         for name in NAMES:
@@ -74,7 +78,7 @@ output.write_text(json.dumps(result))
         return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
     def invoke(self,script,*args):
-        return subprocess.run(['bash',str(KIT/'scripts'/script),*args],cwd=self.root,env=self.env,text=True,capture_output=True)
+        return subprocess.run([BASH,str(KIT/'scripts'/script),*args],cwd=self.root,env=self.env,text=True,capture_output=True)
 
     def preserved(self):
         self.assertEqual((self.state/'inflight/99').read_text(),'PID=99999\nLANE=review\n')
@@ -137,7 +141,7 @@ INFLIGHT_DIR=.claude/super-board/inflight
 WORKER_LOG_DIR="$PWD"
 dispatch_lane build 1
 '''
-        result=subprocess.run(['bash','-c',body,'fixture',str(KIT)],cwd=self.root,env=self.env,text=True,capture_output=True)
+        result=subprocess.run([BASH,'-c',body,'fixture',str(KIT)],cwd=self.root,env=self.env,text=True,capture_output=True)
         self.assertEqual(result.returncode,10,result.stderr)
         self.assertTrue(all(c['tool']=='gh' and c['args'][:2]==['issue','view'] for c in self.calls()))
         self.assertFalse((self.root/'worker-build-1.log').exists())
@@ -149,13 +153,14 @@ dispatch_lane build 1
         for name in ['super-board-github-read.py','super-board-skills-ready.py']:
             shutil.copy2(KIT/'scripts'/name,directory/name)
         self.env.update(REPO_DIR=str(self.root),BASE_BRANCH=subprocess.check_output(['git','-C',str(self.root),'branch','--show-current'],text=True).strip())
-        result=subprocess.run(['bash',str(KIT/'skills/super-build/scripts/super-build-dispatch.sh'),'1'],cwd=self.root,env=self.env,text=True,capture_output=True)
+        result=subprocess.run([BASH,str(KIT/'skills/super-build/scripts/super-build-dispatch.sh'),'1'],cwd=self.root,env=self.env,text=True,capture_output=True)
         self.assertEqual(result.returncode,10,result.stderr)
         self.assertFalse((self.root/'.planning/super-build-logs').exists())
         self.assertFalse((self.root/'.claude/worktrees/issue-1').exists())
         self.assertTrue(all(c['tool']=='gh' and c['args'][:2]==['issue','view'] for c in self.calls()))
         self.preserved()
 
+    @unittest.skipIf(os.name=='nt', 'signals and kills an owned worker process group (POSIX pids/SIGTERM)')
     def test_legacy_halt_stops_owned_worker_preserves_unrelated_and_evidence(self):
         self.full('claude')
         def reap_owned():
@@ -263,7 +268,7 @@ elif args[:2]==['issue','view']:
 elif args[:2]==['issue','edit'] and '--add-assignee' in args:pass
 else:sys.exit('unexpected gh call: '+str(args))
 """)
-        result = subprocess.run(['bash',str(KIT/'scripts/super-board-run.sh'),'fixture'],cwd=self.root,
+        result = subprocess.run([BASH,str(KIT/'scripts/super-board-run.sh'),'fixture'],cwd=self.root,
                                 env=self.env,text=True,capture_output=True,timeout=15)
         self.assertEqual(result.returncode,10,result.stderr + result.stdout)
         deadline = __import__('time').monotonic()+3

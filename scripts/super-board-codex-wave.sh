@@ -5,20 +5,54 @@
 # Unless one model is pinned (--codex=<model> or codex.model), a cheap router
 # (ROUTER_MODEL) grades each Ready card low/medium/high; the lane launcher maps
 # tier x grade to a model through its Codex.LADDERS table.
+# Windows: `python3` may be a Store stub; use the resolved interpreter when the resolver ships alongside.
+for _sb_py_lib in "$(dirname "${BASH_SOURCE[0]}")"/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../scripts/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../bin/super-board-python.sh; do
+  [ -f "$_sb_py_lib" ] || continue
+  . "$_sb_py_lib"; [ -n "${SB_PYTHON:-}" ] || sb_python_init 2>/dev/null || true
+  break
+done
+unset _sb_py_lib
 set -euo pipefail
-exec python3 - "${BASH_SOURCE[0]}" "$@" <<'PY'
+exec "${SB_PYTHON:-python3}" - "${BASH_SOURCE[0]}" "$@" <<'PY'
 import argparse
 import importlib.util
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+
+# Bare "bash" can be WSL's launcher on Windows; resolve it. Windows also has no process groups.
+BASH = shutil.which('bash') or 'bash'
+SIGKILL = getattr(signal, 'SIGKILL', signal.SIGTERM)  # Windows has no SIGKILL; kill_group() uses process.kill()
+
+
+def bash_command(argv):
+    """argv for a bash child. A native process starting MSYS bash.exe has its command line
+    re-parsed, which globs [ ] { } * ? inside unquoted arguments and would mangle the JSON card;
+    on Windows single-quote every argument that is not plainly safe."""
+    if os.name != 'nt':
+        return argv
+    safe = re.compile(r'^[A-Za-z0-9_./:=,+@%-]+$')
+    quote = lambda a: a if a and safe.match(a) else "'" + a.replace("'", "'\"'\"'") + "'"
+    return ' '.join([subprocess.list2cmdline([argv[0]])] + [quote(a) for a in argv[1:]])
+
+
+def kill_group(process, sig):
+    if hasattr(os, 'killpg'):
+        os.killpg(process.pid, sig)
+    elif sig == signal.SIGTERM:
+        process.terminate()
+    else:
+        process.kill()
+
 
 parser = argparse.ArgumentParser(description='Dispatch one explicitly opted-in Codex wave.')
 parser.add_argument('--config', required=True)
@@ -107,16 +141,16 @@ def cancel(signum, frame):
         processes = list(active)
         for process in processes:
             try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
+                kill_group(process, signal.SIGTERM)
+            except (ProcessLookupError, OSError):
                 pass
     # Process groups include the launcher, Codex, and shell descendants. Kill
     # lingering descendants too, even when their launcher already exited.
     time.sleep(2)
     for process in processes:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+            kill_group(process, SIGKILL)
+        except (ProcessLookupError, OSError):
             pass
 
 signal.signal(signal.SIGTERM, cancel)
@@ -156,7 +190,7 @@ def grade(card):
             if halted.is_set():
                 return None, True
             try:
-                process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                process = subprocess.Popen([shutil.which(command[0]) or command[0], *command[1:]], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                            text=True, start_new_session=True)
             except OSError:
                 return None, False
@@ -203,17 +237,17 @@ def run_card(card):
             process = None
             lock = inflight / str(card['number'])
             try:
-                process = subprocess.Popen(['bash', str(launcher), '--backend', 'codex', '--config', str(config_path),
+                process = subprocess.Popen(bash_command([BASH, launcher.as_posix(), '--backend', 'codex', '--config', str(config_path),
                                             '--card', json.dumps(current), '--lane', lane, codex[0],
-                                            '--tier', args.tier] + (['--complexity', complexity] if complexity else []),
+                                            '--tier', args.tier] + (['--complexity', complexity] if complexity else [])),
                                            stdout=subprocess.PIPE, text=True, start_new_session=True)
                 active.add(process)
                 lock.write_text(f'PID={process.pid}\nLANE={lane}\nSTARTED={time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}\n')
             except OSError as error:
                 if process is not None:
                     try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
+                        kill_group(process, SIGKILL)
+                    except (ProcessLookupError, OSError):
                         pass
                     process.wait()
                     active.discard(process)

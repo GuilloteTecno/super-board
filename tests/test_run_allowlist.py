@@ -39,7 +39,7 @@ base_rules = set(RULE.findall(base))
 
 
 def covered(script, form, pool):
-    forms = [form] if form else ["bash", "python3", "source", None]
+    forms = [form] if form else ["source", "bash", "python3", None]
     for f in forms:
         target = f".claude/bin/{script}" if f is None else f"{f} .claude/bin/{script}"
         if f"Bash({target}:*)" in pool:

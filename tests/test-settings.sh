@@ -2,6 +2,9 @@
 # Tests super-board-settings.py allow — onboard's Permissions step: print the diff,
 # write only after approval, keep every existing key, add each rule once.
 set -euo pipefail
+# python3 may be a Windows Store stub: put a working `python3` shim on PATH (also covers shebangs).
+. "$(dirname "${BASH_SOURCE[0]}")/../scripts/super-board-python.sh"; sb_python_init || exit 1
+sb_python_shim
 cd "$(dirname "$0")"
 S="$PWD/../scripts/super-board-settings.py"
 fail() { echo "FAIL: $1" >&2; exit 1; }

@@ -29,6 +29,13 @@
 # Exits:  0 ok · 64 bad args · 65 no holding column · 66 unreadable/weak body
 #         70 gh failure · 71 filed but not placed (number still on stdout)
 #         79 repository paused (existing issue number still on stdout after discovery)
+# Windows: `python3` may be a Store stub; use the resolved interpreter when the resolver ships alongside.
+for _sb_py_lib in "$(dirname "${BASH_SOURCE[0]}")"/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../scripts/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../bin/super-board-python.sh; do
+  [ -f "$_sb_py_lib" ] || continue
+  . "$_sb_py_lib"; [ -n "${SB_PYTHON:-}" ] || sb_python_init 2>/dev/null || true
+  break
+done
+unset _sb_py_lib
 set -uo pipefail
 
 ORIGINAL_ARGS=("$@")
@@ -97,21 +104,21 @@ fi
 
 # Router-owned duplicate/adopt writes share the same halt as the child filers.
 GITHUB_READ="$BIN/super-board-github-read.py"
-python3 "$GITHUB_READ" --check || exit $?
+"${SB_PYTHON:-python3}" "$GITHUB_READ" --check || exit $?
 REPO_NAME="${REPO_FLAG[1]:-}"
 if [ -z "$REPO_NAME" ]; then
-  REPO_NAME=$(python3 "$GITHUB_READ" --kind scalar -- repo view --json nameWithOwner --jq .nameWithOwner) || exit $?
+  REPO_NAME=$("${SB_PYTHON:-python3}" "$GITHUB_READ" --kind scalar -- repo view --json nameWithOwner --jq .nameWithOwner) || exit $?
 fi
 case "$REPO_NAME" in */*) ;; *) die "cannot resolve owner/name for collector" 70;; esac
 STATE="$BIN/super-board-collect-state.py"
-LOCK_KEY=$(printf '%s' "$REPO_NAME" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.read().lower().encode()).hexdigest())')
+LOCK_KEY=$(printf '%s' "$REPO_NAME" | "${SB_PYTHON:-python3}" -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.read().lower().encode()).hexdigest())')
 if [ "${SB_COLLECT_LOCK_HELD:-}" != "$LOCK_KEY" ]; then
-  exec python3 "$STATE" --repo "$REPO_NAME" --lock -- "$0" "${ORIGINAL_ARGS[@]}"
+  exec "${SB_PYTHON:-python3}" "$STATE" --repo "$REPO_NAME" --lock -- "$0" "${ORIGINAL_ARGS[@]}"
 fi
-state() { python3 "$STATE" --repo "$REPO_NAME" --action "$1" --fingerprint "${FP:-adopt|$ADOPT}" --digest "${DIGEST:-}" --issue "${2:-}"; }
+state() { "${SB_PYTHON:-python3}" "$STATE" --repo "$REPO_NAME" --action "$1" --fingerprint "${FP:-adopt|$ADOPT}" --digest "${DIGEST:-}" --issue "${2:-}"; }
 DIGEST=""
 if [ -n "$BODY_FILE" ]; then
-  DIGEST=$(python3 -c 'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0").encode()+open(sys.argv[2],"rb").read()).hexdigest())' "$SOURCE" "$BODY_FILE") || exit 70
+  DIGEST=$("${SB_PYTHON:-python3}" -c 'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0").encode()+open(sys.argv[2],"rb").read()).hexdigest())' "$SOURCE" "$BODY_FILE") || exit 70
 fi
 
 # --- body sections ----------------------------------------------------------
@@ -141,7 +148,7 @@ if [ -z "$ADOPT" ]; then
 fi
 
 # --- holding column ---------------------------------------------------------
-FIELDS=$(python3 "$GITHUB_READ" --kind fields -- project field-list "$NUMBER" --owner "$OWNER" --format json) || exit $?
+FIELDS=$("${SB_PYTHON:-python3}" "$GITHUB_READ" --kind fields -- project field-list "$NUMBER" --owner "$OWNER" --format json) || exit $?
 HOLD=""
 for c in Backlog Todo "To do" Triage Inbox; do
   hit=$(echo "$FIELDS" | jq -r --arg c "$c" '.fields[] | select(.name=="Status") | .options[]? | select(.name==$c) | .name' | head -1)
@@ -151,13 +158,13 @@ done
 
 place() { # $1 = issue url
   local item_id project_id field_id option_id
-  python3 "$GITHUB_READ" --check || return $?
+  "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || return $?
   item_id=$(gh project item-add "$NUMBER" --owner "$OWNER" --url "$1" --format json --jq '.id') || return 1
-  python3 "$GITHUB_READ" --check || return $?
+  "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || return $?
   project_id=$(gh project view "$NUMBER" --owner "$OWNER" --format json --jq '.id') || return 1
   field_id=$(echo "$FIELDS" | jq -r '.fields[] | select(.name=="Status") | .id')
   option_id=$(echo "$FIELDS" | jq -r --arg c "$HOLD" '.fields[] | select(.name=="Status") | .options[] | select(.name==$c) | .id')
-  python3 "$GITHUB_READ" --check || return $?
+  "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || return $?
   gh project item-edit --id "$item_id" --project-id "$project_id" \
     --field-id "$field_id" --single-select-option-id "$option_id" >/dev/null
 }
@@ -165,11 +172,11 @@ place() { # $1 = issue url
 tag() { # $1 = issue number, rest = labels; best-effort
   local n="$1"; shift
   for l in "$@"; do
-    python3 "$GITHUB_READ" --check || return $?
+    "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || return $?
     gh label create "$l" ${REPO_FLAG[@]+"${REPO_FLAG[@]}"} --color 5319E7 --force >/dev/null 2>&1 || true
   done
   for l in "$@"; do
-    python3 "$GITHUB_READ" --check || return $?
+    "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || return $?
     gh issue edit "$n" ${REPO_FLAG[@]+"${REPO_FLAG[@]}"} --add-label "$l" >/dev/null 2>&1 || echo "warn: could not label #${n} ${l}" >&2
   done
   return 0
@@ -178,13 +185,13 @@ tag() { # $1 = issue number, rest = labels; best-effort
 # --- adopt ------------------------------------------------------------------
 if [ -n "$ADOPT" ]; then
   if [ "$YES" -ne 1 ]; then echo "would-adopt|#${ADOPT}|${TYPE}|${HOLD}"; exit 0; fi
-  URL=$(python3 "$GITHUB_READ" --kind scalar -- issue view "$ADOPT" ${REPO_FLAG[@]+"${REPO_FLAG[@]}"} --json url --jq .url) || exit $?
-  BOARD=$(python3 "$GITHUB_READ" --kind items -- project item-list "$NUMBER" --owner "$OWNER" --format json --limit 500) || exit $?
+  URL=$("${SB_PYTHON:-python3}" "$GITHUB_READ" --kind scalar -- issue view "$ADOPT" ${REPO_FLAG[@]+"${REPO_FLAG[@]}"} --json url --jq .url) || exit $?
+  BOARD=$("${SB_PYTHON:-python3}" "$GITHUB_READ" --kind items -- project item-list "$NUMBER" --owner "$OWNER" --format json --limit 500) || exit $?
   # A matching issue number without its repository URL cannot prove whether
   # this is already our card. Preserve potentially live work until reconciled.
   AMBIGUOUS=$(printf '%s' "$BOARD" | jq -r --argjson n "$ADOPT" '[.items[] | select(.content.type == "Issue" and .content.number == $n and ((.content.url // "") == ""))] | length') || exit 70
   if [ "$AMBIGUOUS" != 0 ]; then
-    python3 "$GITHUB_READ" --halt "Board identity is incomplete for issue #${ADOPT}; reconcile before adoption"
+    "${SB_PYTHON:-python3}" "$GITHUB_READ" --halt "Board identity is incomplete for issue #${ADOPT}; reconcile before adoption"
     exit 79
   fi
   # Never reset a card already on the board to Backlog, especially live work.
@@ -201,7 +208,7 @@ fi
 # Repo-wide, any label, any state. An open hit is a duplicate; a closed-only hit
 # is a recurrence — file again, but name the issue that claimed the fix.
 # Exact match on a whitespace-delimited token: `err|sentry|441` must not hit `err|sentry|4411`.
-ISSUES_JSON=$(python3 "$GITHUB_READ" --issue-history "$REPO_NAME") || exit $?
+ISSUES_JSON=$("${SB_PYTHON:-python3}" "$GITHUB_READ" --issue-history "$REPO_NAME") || exit $?
 HITS=$(printf '%s' "$ISSUES_JSON" | jq -r --arg fp "$FP" '[.[] | select(any(.body | splits("\\s+"); . == $fp))] | sort_by(.state != "OPEN") | map("\(.number) \(.state)") | .[]') || exit 70
 
 OPEN_HIT=$(echo "$HITS" | awk '$2=="OPEN"{print $1; exit}')
@@ -209,13 +216,13 @@ CLOSED_HIT=$(echo "$HITS" | awk '$2!="OPEN" && $1!=""{print $1; exit}')
 
 if [ -n "$OPEN_HIT" ]; then
   if [ "$YES" -ne 1 ]; then echo "duplicate|#${OPEN_HIT}|${TYPE}|${TITLE}"; exit 0; fi
-  python3 "$GITHUB_READ" --check || { RC=$?; echo "$OPEN_HIT"; exit "$RC"; }
+  "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || { RC=$?; echo "$OPEN_HIT"; exit "$RC"; }
   SEEN=$(state seen "$OPEN_HIT") || exit $?
   if [ "$SEEN" = unchanged ]; then echo "$OPEN_HIT"; exit 0; fi
   state begin "$OPEN_HIT" || exit $?
   gh issue comment "$OPEN_HIT" ${REPO_FLAG[@]+"${REPO_FLAG[@]}"} --body "Seen again by super-collect (${SOURCE}).
 
-$(cat "$BODY_FILE")" >/dev/null 2>&1 || { python3 "$GITHUB_READ" --halt "Collector comment outcome unknown for #${OPEN_HIT}; reconcile before retrying"; echo "$OPEN_HIT"; exit 79; }
+$(cat "$BODY_FILE")" >/dev/null 2>&1 || { "${SB_PYTHON:-python3}" "$GITHUB_READ" --halt "Collector comment outcome unknown for #${OPEN_HIT}; reconcile before retrying"; echo "$OPEN_HIT"; exit 79; }
   state success "$OPEN_HIT" || exit $?
   echo "$OPEN_HIT"; exit 0
 fi
@@ -263,7 +270,7 @@ if [ "$RC" -eq 79 ]; then [ -z "$N" ] || echo "$N"; exit 79; fi
 if [ "$RC" -eq 64 ] || [ "$RC" -eq 66 ]; then state known-failure || true; fi
 case "$N" in ''|*[!0-9]*) die "filer failed (exit ${RC})" "$([ "$RC" -ne 0 ] && echo "$RC" || echo 70)" ;; esac
 if [ "$RC" -ne 0 ]; then
-  python3 "$GITHUB_READ" --halt "Collector filing/placement incomplete for #${N}; reconcile before retrying"
+  "${SB_PYTHON:-python3}" "$GITHUB_READ" --halt "Collector filing/placement incomplete for #${N}; reconcile before retrying"
   echo "$N"; exit 79
 fi
 tag "$N" "source:collect" "collect:${SOURCE}" ${EXTRA_LABELS[@]+"${EXTRA_LABELS[@]}"} || { RC=$?; echo "$N"; exit "$RC"; }

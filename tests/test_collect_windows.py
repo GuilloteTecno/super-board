@@ -44,6 +44,7 @@ def shim_bin(root):
     return bin_dir
 
 
+@unittest.skipIf(os.name == "nt", "emulates Windows on a POSIX host (needs the real fcntl); native Windows runs test_collect_intake_safety.py directly")
 class WindowsIntakeTests(intake.IntakeTests):
     """Every intake regression again, through the portable lock path."""
     def setUp(self):
@@ -86,6 +87,7 @@ class ImportTests(unittest.TestCase):
         # import flips it to its Windows branch (_winapi). Holds on every interpreter.
         self.assertLess(SHIM.index('import subprocess'), SHIM.index("sys.modules['msvcrt']"))
 
+    @unittest.skipIf(os.name == "nt", "the shim imports the POSIX fcntl it hides")
     def test_module_imports_without_fcntl(self):
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = shim_bin(Path(tmp))

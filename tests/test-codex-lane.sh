@@ -4,6 +4,11 @@
 # Every case runs twice: through the super-board-codex-lane.sh shim and through
 # super-board-lane.sh --backend codex, with the same stubbed codex.
 set -euo pipefail
+# python3 may be a Windows Store stub: put a working `python3` shim on PATH (also covers shebangs).
+. "$(dirname "${BASH_SOURCE[0]}")/../scripts/super-board-python.sh"; sb_python_init || exit 1
+sb_python_shim
+# Fixture repos: never inherit a global core.autocrlf=true (it rewrites checked-out files to CRLF).
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.autocrlf GIT_CONFIG_VALUE_0=false
 KIT=$(cd "$(dirname "$0")/.." && pwd)
 if [ -z "${SB_LANE_ENTRY:-}" ]; then
   for entry in shim backend; do SB_LANE_ENTRY=$entry bash "$0" || { echo "FAIL: entry $entry" >&2; exit 1; }; done
@@ -40,6 +45,8 @@ export SB_CODEX_TEST_LOG="$T/calls.jsonl"
 export PATH="$T/bin:$PATH"
 cp "$KIT/tests/fixtures/fake_codex.py" "$T/bin/codex"
 chmod +x "$T/bin/codex"
+# Windows cannot exec an extensionless script: give native callers a codex.cmd beside it.
+case "$(uname -s)" in MINGW*|MSYS*) printf '@"%s" "%%~dp0codex" %%*\r\n' "$(cygpath -w "$(command -v "$SB_PYTHON")")" > "$T/bin/codex.cmd" ;; esac
 cd "$T/repo"
 echo '{"verify_commands":["git diff --check"]}' > "$T/config.json"
 CARD='{"number":1,"status":"Ready","title":"example"}'
@@ -239,6 +246,9 @@ CARDS='[{"number":1,"status":"Review"}]'
 wave --codex >"$T/out"
 jq -e '.cards[0].finalStatus == "failed" and (.cards[0].detail | contains("could not start"))' "$T/out" >/dev/null || fail 'startup failure needs structured result'
 rmdir .claude/super-board/inflight/1
+
+# Windows: Git Bash cannot deliver SIGTERM to a native python.exe, and there are no process groups.
+case "$(uname -s)" in MINGW*|MSYS*) echo "PASS: test-codex-lane.sh [$SB_LANE_ENTRY] (all but SIGTERM cancellation, which is POSIX-only)"; exit 0 ;; esac
 
 # TERM reaps the Codex process group and its descendants before lock cleanup.
 CARDS='[{"number":1,"status":"Review"}]'

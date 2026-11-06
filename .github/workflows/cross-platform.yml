@@ -1,6 +1,7 @@
 name: cross-platform
 
-# All offline safety suites run on Linux/macOS. Windows checks the status reader.
+# All offline safety suites run on Linux, macOS and Windows (Git Bash). Windows also runs the
+# smoke job for the status reader. Symlink-only install scenarios skip where symlinks are denied.
 # Reused by release.yml so a failed suite prevents the publish job from running.
 permissions:
   contents: read
@@ -63,11 +64,12 @@ jobs:
   safety:
     name: safety (${{ matrix.os }} / py${{ matrix.python }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # Windows spawns processes slowly under Git Bash; the full gate takes far longer there.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.9", "3.12"]
 
     steps:
@@ -82,6 +84,7 @@ jobs:
         with:
           node-version: "22"
       - name: Run every offline safety suite
+        shell: bash
         env:
           SB_RUNTIME_TEST_ARTIFACTS: ${{ runner.temp }}/runtime-test-evidence
         run: bash tests/run-safety.sh

@@ -4,6 +4,11 @@
 # unmerged work and the current worktree stay, dirty state is wip-committed, a stray
 # worktree loses its folder but keeps its branch, and the recovery TSV restores.
 set -euo pipefail
+# python3 may be a Windows Store stub: put a working `python3` shim on PATH (also covers shebangs).
+. "$(dirname "${BASH_SOURCE[0]}")/../scripts/super-board-python.sh"; sb_python_init || exit 1
+sb_python_shim
+# Fixture repos: never inherit a global core.autocrlf=true (it rewrites checked-out files to CRLF).
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.autocrlf GIT_CONFIG_VALUE_0=false
 cd "$(dirname "$0")"
 CW="$(pwd)/../hooks/cleanup-wt.py"
 fail() { echo "FAIL: $1" >&2; exit 1; }

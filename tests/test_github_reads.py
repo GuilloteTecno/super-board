@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Offline CLI contract: bounded required reads, validated evidence, local stop."""
 import json
+import sys
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _compat import BASH  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / 'scripts/super-board-github-read.py'
@@ -25,12 +28,12 @@ n = int(p.read_text()) if p.exists() else 0
 p.write_text(str(n + 1))
 responses = json.loads(os.environ['READ_RESPONSES'])
 r = responses[min(n, len(responses)-1)]
-print(r.get('out', ''), end='')
-print(r.get('err', ''), file=sys.stderr)
+sys.stdout.buffer.write(r.get('out', '').encode())  # bytes: Windows text mode would add CRs
+sys.stderr.buffer.write((r.get('err', '') + chr(10)).encode())
 sys.exit(r.get('rc', 0))
 ''')
         gh.chmod(0o755)
-        self.env = dict(os.environ, PATH=f'{self.root}:{os.environ["PATH"]}',
+        self.env = dict(os.environ, PATH=f'{self.root}{os.pathsep}{os.environ["PATH"]}',
                         READ_CALLS=str(self.log), SB_GITHUB_HALT_FILE=str(self.halt),
                         SB_GITHUB_RETRY_DELAY='0')
 
@@ -39,7 +42,7 @@ sys.exit(r.get('rc', 0))
 
     def read(self, responses, kind='json', command=None):
         self.env['READ_RESPONSES'] = json.dumps(responses)
-        return subprocess.run(['python3', str(HELPER), '--kind', kind, '--',
+        return subprocess.run([sys.executable, str(HELPER), '--kind', kind, '--',
                                *(command or ['api', 'rate_limit'])],
                               env=self.env, text=True, capture_output=True, cwd=self.root)
 
@@ -130,7 +133,7 @@ sys.exit(r.get('rc', 0))
     def test_failed_recovery_keeps_original_reason(self):
         self.assertEqual(self.read([{'rc': 1}]).returncode, 79)
         original = self.halt.read_text()
-        result = subprocess.run(['python3', str(HELPER), '--resume'], env=self.env, capture_output=True)
+        result = subprocess.run([sys.executable, str(HELPER), '--resume'], env=self.env, capture_output=True)
         self.assertEqual(result.returncode, 79)
         self.assertEqual(self.halt.read_text(), original)
 
@@ -144,7 +147,7 @@ fetch_project_items; rc=$?
 printf '%s %s\n' "$rc" "$PROJECT_ITEMS_JSON"
 dispatch_lane build 7
 """
-        result = subprocess.run(['bash', '-c', script, 'test', str(ROOT / 'scripts/super-board-run.sh')],
+        result = subprocess.run([BASH, '-c', script, 'test', str(ROOT / 'scripts/super-board-run.sh')],
                                 cwd=self.root, env=self.env, text=True, capture_output=True)
         self.assertEqual(result.returncode, 79, result.stderr)
         self.assertIn('79 {"items":[{"id":"preserved"}]}', result.stdout)
@@ -153,14 +156,14 @@ dispatch_lane build 7
     def test_unknown_issue_state_never_means_open(self):
         self.env['READ_RESPONSES'] = json.dumps([{'rc': 1}])
         script = 'SB_LIB_ONLY=1 . "$1"; issue_is_open 7'
-        result = subprocess.run(['bash', '-c', script, 'test', str(ROOT / 'scripts/super-board-run.sh')],
+        result = subprocess.run([BASH, '-c', script, 'test', str(ROOT / 'scripts/super-board-run.sh')],
                                 cwd=self.root, env=self.env, capture_output=True)
         self.assertEqual(result.returncode, 79)
         self.assertEqual(self.log.read_text(), '3')
 
     def test_missing_quota_never_means_full_allowance(self):
         self.env['READ_RESPONSES'] = json.dumps([{'rc': 1}])
-        result = subprocess.run(['bash', '-c', '. "$1"; sb_gh_guard_check 200', 'test',
+        result = subprocess.run([BASH, '-c', '. "$1"; sb_gh_guard_check 200', 'test',
                                  str(ROOT / 'scripts/super-board-gh-guard.sh')], cwd=self.root,
                                 env=self.env, capture_output=True)
         self.assertEqual(result.returncode, 79)
@@ -180,7 +183,7 @@ dispatch_lane build 7
         metadata = self.root / 'meta.json'
         metadata.write_text(json.dumps({'files':[{'path':'a'},{'path':'b'}], 'additions':1,'deletions':0}))
         self.env['READ_RESPONSES'] = json.dumps([{'out':'diff --git a/a b/a\n@@ -0,0 +1 @@\n+one\n'}])
-        r = subprocess.run(['python3', str(HELPER), '--kind', 'diff', '--meta', str(metadata),
+        r = subprocess.run([sys.executable, str(HELPER), '--kind', 'diff', '--meta', str(metadata),
                             '--', 'pr', 'diff', '1'], env=self.env, cwd=self.root, text=True, capture_output=True)
         self.assertEqual(r.returncode, 64, r.stderr)
         self.assertIn('diff file list incomplete', r.stderr)
@@ -193,7 +196,7 @@ dispatch_lane build 7
         metadata = self.root / 'meta.json'
         metadata.write_text(json.dumps({'files':[{'path':'x.sql'}], 'additions':2,'deletions':0}))
         self.env['READ_RESPONSES'] = json.dumps([{'out':'diff --git a/x.sql b/x.sql\n@@ -0,0 +1,2 @@\n+one\n'}])
-        result = subprocess.run(['python3', str(HELPER), '--kind', 'diff', '--meta', str(metadata),
+        result = subprocess.run([sys.executable, str(HELPER), '--kind', 'diff', '--meta', str(metadata),
                                  '--', 'pr', 'diff', '1'], env=self.env, cwd=self.root, capture_output=True)
         self.assertEqual(result.returncode, 79)
         self.assertEqual(result.stdout, b'')
@@ -208,7 +211,7 @@ dispatch_lane build 7
                 '@@ -1,3 +1,6 @@\n keep\n-old\x0bline\n+new\x0bvt\x0cff\n+sep\u2028\u2029para\x1c\x85\n'
                 '+lone\rcr\n+crlf\r\n keep2\n')
         self.env['READ_RESPONSES'] = json.dumps([{'out': diff}])
-        result = subprocess.run(['python3', str(HELPER), '--kind', 'diff', '--meta', str(metadata),
+        result = subprocess.run([sys.executable, str(HELPER), '--kind', 'diff', '--meta', str(metadata),
                                  '--', 'pr', 'diff', '1'], env=self.env, cwd=self.root, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.log.read_text(), '1')
@@ -219,7 +222,7 @@ dispatch_lane build 7
         self.assertEqual(self.read([{'rc':1,'err':'Cannot query field wrong'}], command=bad).returncode,79)
         original = self.halt.read_text()
         self.env['READ_RESPONSES'] = json.dumps([{'out':'{"resources":{"graphql":{"remaining":5000,"reset":0},"core":{"remaining":5000,"reset":0}}}'}])
-        result = subprocess.run(['python3',str(HELPER),'--resume','--kind','json','--',
+        result = subprocess.run([sys.executable, str(HELPER),'--resume','--kind','json','--',
                                  'api','graphql','-f','query=query { viewer { login } }'],
                                 env=self.env,cwd=self.root,capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr)
@@ -238,7 +241,7 @@ STATUS_FIELD_ID=field; STATUS_OPTIONS_JSON='[{"id":"done","name":"Done"}]'
 PROJECT_ITEMS_JSON='{"items":[{"id":"item","status":"Review","content":{"number":7,"type":"Issue","assignees":[]}}]}'
 top_card_in_column Review
 """
-        result = subprocess.run(['bash','-c',script,'test',str(ROOT / 'scripts/super-board-run.sh'),str(self.root)],
+        result = subprocess.run([BASH,'-c',script,'test',str(ROOT / 'scripts/super-board-run.sh'),str(self.root)],
                                 env=self.env,cwd=self.root,capture_output=True)
         self.assertEqual(result.returncode,79,result.stderr)
         self.assertEqual(self.log.read_text(),'4','one state read, three failed project reads, no claim release')
@@ -256,7 +259,7 @@ top_card_in_column Review
         lock = inflight / '7'; lock.write_text('PID=\nLANE=build\n')
         self.env['READ_RESPONSES'] = json.dumps([{'rc':1}])
         script = 'SB_LIB_ONLY=1 . "$1"; INFLIGHT_DIR="$2/inflight"; RUN_MANIFEST="$2/run.log"; BOT_LOGIN=robot; reap_finished_locks'
-        result = subprocess.run(['bash','-c',script,'test',str(ROOT / 'scripts/super-board-run.sh'),str(self.root)],
+        result = subprocess.run([BASH,'-c',script,'test',str(ROOT / 'scripts/super-board-run.sh'),str(self.root)],
                                 env=self.env,cwd=self.root,capture_output=True)
         self.assertEqual(result.returncode,79)
         self.assertEqual(self.log.read_text(),'1')
@@ -278,7 +281,7 @@ top_card_in_column Review
         self.env['SB_REPO_PATH'] = str(main)
         self.assertEqual(self.read([{'out': '{}'}]).returncode, 79)
         self.env['READ_RESPONSES'] = json.dumps([{'out': '{"resources":{"graphql":{"remaining":5000,"reset":0},"core":{"remaining":5000,"reset":0}}}'}])
-        subprocess.run(['python3', str(HELPER), '--resume'], env=self.env, check=True)
+        subprocess.run([sys.executable, str(HELPER), '--resume'], env=self.env, check=True)
         self.assertFalse(marker.exists())
         self.assertEqual(len(list(marker.parent.glob('github-halt-*.json'))), 1)
         self.assertEqual(self.read([{'out': '{}'}]).returncode, 0)

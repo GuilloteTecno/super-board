@@ -3,6 +3,11 @@
 # workflows/super-board-wave.js. Expected summary keys are read from the workflow itself.
 # Stubbed Codex only (tests/fixtures/fake_codex.py). No network.
 set -euo pipefail
+# python3 may be a Windows Store stub: put a working `python3` shim on PATH (also covers shebangs).
+. "$(dirname "${BASH_SOURCE[0]}")/../scripts/super-board-python.sh"; sb_python_init || exit 1
+sb_python_shim
+# Fixture repos: never inherit a global core.autocrlf=true (it rewrites checked-out files to CRLF).
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.autocrlf GIT_CONFIG_VALUE_0=false
 KIT=$(cd "$(dirname "$0")/.." && pwd)
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/repo" "$T/bare" "$T/home"
@@ -21,6 +26,8 @@ else:
 PYGH
 cp "$KIT/tests/fixtures/fake_codex.py" "$T/bin/codex"
 chmod +x "$T/bin/gh" "$T/bin/codex"
+# Windows cannot exec an extensionless script: give native callers a codex.cmd beside it.
+case "$(uname -s)" in MINGW*|MSYS*) printf '@"%s" "%%~dp0codex" %%*\r\n' "$(cygpath -w "$(command -v "$SB_PYTHON")")" > "$T/bin/codex.cmd" ;; esac
 export SB_CODEX_TEST_LOG="$T/calls.jsonl"
 export PATH="$T/bin:$PATH"
 CARDS='[{"number":1,"status":"Ready","title":"one"},{"number":2,"status":"Review"}]'

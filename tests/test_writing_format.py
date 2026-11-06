@@ -13,6 +13,9 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _compat import BASH  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 REF = ROOT / "skills" / "super-board" / "references"
@@ -217,7 +220,7 @@ def test_needs_you_comment_is_checklist_first():
 # ── PR body ──────────────────────────────────────────────────────────────────
 
 def test_pr_body_markers():
-    out = subprocess.run(["bash", str(ROOT / "scripts" / "super-board-pr-body.sh"), "--skeleton"],
+    out = subprocess.run([BASH, str(ROOT / "scripts" / "super-board-pr-body.sh"), "--skeleton"],
                          capture_output=True, text=True, check=True).stdout
     for b in PR_BLOCKS:
         assert f"<!-- sb:{b} -->" in out and f"<!-- /sb:{b} -->" in out, f"skeleton lacks {b}"

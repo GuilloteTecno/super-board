@@ -24,6 +24,13 @@
 #
 # Exits: 0 ok (stdout: updated | unchanged | the body on --dry-run)
 #        6 PR head moved · 64 usage · 66 unreadable file · 70 gh failure
+# Windows: `python3` may be a Store stub; use the resolved interpreter when the resolver ships alongside.
+for _sb_py_lib in "$(dirname "${BASH_SOURCE[0]}")"/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../scripts/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../bin/super-board-python.sh; do
+  [ -f "$_sb_py_lib" ] || continue
+  . "$_sb_py_lib"; [ -n "${SB_PYTHON:-}" ] || sb_python_init 2>/dev/null || true
+  break
+done
+unset _sb_py_lib
 set -uo pipefail
 
 BLOCKS="redcheck status problem solution ac history visual risk"
@@ -79,7 +86,7 @@ GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-re
 # card, and the REST core bucket is separate from the GraphQL one the board
 # lives on. GH_REPO fills {owner}/{repo}; unset, gh uses the current checkout.
 export GH_REPO="${REPO:-${GH_REPO:-}}"; [ -n "$GH_REPO" ] || unset GH_REPO
-META=$(python3 "$GITHUB_READ" --kind body -- api "repos/{owner}/{repo}/pulls/$PR" --jq '{headRefOid: .head.sha, body: (.body // "")}' ) || exit $?
+META=$("${SB_PYTHON:-python3}" "$GITHUB_READ" --kind body -- api "repos/{owner}/{repo}/pulls/$PR" --jq '{headRefOid: .head.sha, body: (.body // "")}' ) || exit $?
 NOW=$(printf '%s' "$META" | jq -r '.headRefOid // empty')
 if [ -n "$HEAD" ]; then
   # Short or full sha both work: the PR head must start with what you passed.
@@ -96,8 +103,9 @@ trap 'rm -f "$OLD_TMP" "$NEW_TMP"' EXIT
 printf '%s' "$META" | jq -r '.body // ""' > "$OLD_TMP"
 
 MODE_FLAG=replace; [ -n "$APPEND_FILE" ] && MODE_FLAG=append
-python3 - "$OLD_TMP" "$SRC" "$BLOCK" "$MODE_FLAG" "$BLOCKS" > "$NEW_TMP" <<'PY' || die "could not splice the block" 70
+"${SB_PYTHON:-python3}" - "$OLD_TMP" "$SRC" "$BLOCK" "$MODE_FLAG" "$BLOCKS" > "$NEW_TMP" <<'PY' || die "could not splice the block" 70
 import sys
+sys.stdout.reconfigure(newline="\n")  # Windows text mode would write CRLF and the body would never compare equal
 old_path, src_path, block, mode, order = sys.argv[1:6]
 order = order.split()
 body = open(old_path, encoding="utf-8").read()
@@ -159,6 +167,6 @@ PY
 if [ "$DRY" -eq 1 ]; then cat "$NEW_TMP"; exit 0; fi
 # $(…) drops trailing newlines, which GitHub does not keep either.
 if [ "$(cat "$OLD_TMP")" = "$(cat "$NEW_TMP")" ]; then echo unchanged; exit 0; fi
-python3 "$GITHUB_READ" --check || exit $?
-jq -n --rawfile b "$NEW_TMP" '{body: $b}' | gh api -X PATCH "repos/{owner}/{repo}/pulls/$PR" --input - >/dev/null 2>&1 || { python3 "$GITHUB_READ" --halt "PR body update outcome unknown for #$PR; read the body before retrying"; exit 79; }
+"${SB_PYTHON:-python3}" "$GITHUB_READ" --check || exit $?
+jq -n --rawfile b "$NEW_TMP" '{body: $b}' | gh api -X PATCH "repos/{owner}/{repo}/pulls/$PR" --input - >/dev/null 2>&1 || { "${SB_PYTHON:-python3}" "$GITHUB_READ" --halt "PR body update outcome unknown for #$PR; read the body before retrying"; exit 79; }
 echo updated

@@ -5,10 +5,14 @@
 #
 #   bash tests/test-ui-refine-loop-setup.sh
 set -uo pipefail
+# Fixture repos: never inherit a global core.autocrlf=true (it rewrites checked-out files to CRLF).
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.autocrlf GIT_CONFIG_VALUE_0=false
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SETUP="$REPO_ROOT/skills/ui-refine-loop/scripts/refine-setup.sh"
 SHOOT="$REPO_ROOT/skills/ui-refine-loop/scripts/shoot.mjs"
+# ESM imports need a file URL on Windows (C:/x/shoot.mjs is not a valid specifier).
+if command -v cygpath >/dev/null 2>&1; then SHOOT_URL="file:///$(cygpath -m "$SHOOT")"; else SHOOT_URL="$SHOOT"; fi
 PRSHOTS="$REPO_ROOT/skills/ui-refine-loop/scripts/pr-shots.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -18,6 +22,9 @@ ok()  { PASS=$((PASS + 1)); printf '  ✅ %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  ❌ %s\n     expected: %s\n     actual:   %s\n' "$1" "$2" "$3"; }
 is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "$2" "$3"; }
 get() { node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(JSON.stringify(eval("j."+process.argv[1])))' "$1"; }
+# Native node/python print Windows paths, single-quoted; compare them in C:/x/y form.
+mp() { cygpath -m "$1" 2>/dev/null || printf %s "$1"; }
+nrm() { tr -d "'" | sed 's#\\\\#/#g'; }
 
 # 1 — bare Next app with pnpm, no config: auto-detect everything, no auth.
 A="$WORK/a"; mkdir -p "$A"; cd "$A"
@@ -81,8 +88,8 @@ is "env_files override"      '[".env.test"]'                           "$(get en
 is "impeccable under ~"      '"impeccable"'                            "$(get critic <<<"$OUT")"
 is "launcher layout"         '"launcher"'                              "$(get impeccable.layout <<<"$OUT")"
 is "launcher version"        '"4.4.0"'                                 "$(get impeccable.version <<<"$OUT")"
-is "launcher detect cmd"     "\"$WORK/home/.claude/skills/impeccable/scripts/impeccable detect --json\"" "$(get impeccable.detect <<<"$OUT")"
-is "launcher context cmd"    "\"$WORK/home/.claude/skills/impeccable/scripts/impeccable context\"" "$(get impeccable.context <<<"$OUT")"
+is "launcher detect cmd"     "\"$(mp "$WORK")/home/.claude/skills/impeccable/scripts/impeccable detect --json\"" "$(get impeccable.detect <<<"$OUT" | nrm)"
+is "launcher context cmd"    "\"$(mp "$WORK")/home/.claude/skills/impeccable/scripts/impeccable context\"" "$(get impeccable.context <<<"$OUT" | nrm)"
 is "no warnings with impeccable" '[]'                                  "$(get warnings <<<"$OUT")"
 
 # 4b — v4.0.x node layout, found in a PARENT dir's .agents/skills (a project nested in a bigger repo).
@@ -94,8 +101,8 @@ OUT=$(HOME="$WORK/nohome" bash "$SETUP" detect 2>/dev/null)
 NREAL=$(cd "$N" && pwd -P)
 is "node layout"             '"node"'                                  "$(get impeccable.layout <<<"$OUT")"
 is "node version"            '"4.0.4"'                                 "$(get impeccable.version <<<"$OUT")"
-is "node detect cmd"         "\"node $NREAL/.agents/skills/impeccable/scripts/detect.mjs --json\"" "$(get impeccable.detect <<<"$OUT")"
-is "node context cmd"        "\"node $NREAL/.agents/skills/impeccable/scripts/context.mjs\"" "$(get impeccable.context <<<"$OUT")"
+is "node detect cmd"         "\"node $(mp "$NREAL")/.agents/skills/impeccable/scripts/detect.mjs --json\"" "$(get impeccable.detect <<<"$OUT" | nrm)"
+is "node context cmd"        "\"node $(mp "$NREAL")/.agents/skills/impeccable/scripts/context.mjs\"" "$(get impeccable.context <<<"$OUT" | nrm)"
 is "found in parent dir"     '"impeccable"'                            "$(get critic <<<"$OUT")"
 
 # 4c — both layouts in one folder: the launcher wins. refine.impeccable may name the skill dir or a script.
@@ -124,14 +131,14 @@ bash "$SETUP" up --worktree /tmp >/dev/null 2>&1; is "qa-hook --worktree is gone
 cd "$WORK"
 echo '[{"name":"dense","query":"?n=500"}]' > states.json
 STATES=$(node --input-type=module -e "
-import { parseStates } from '$SHOOT';
+import { parseStates } from '$SHOOT_URL';
 console.log(JSON.stringify([parseStates(undefined), parseStates('main,empty'), parseStates('[{\"name\":\"x\"}]'), parseStates('states.json')]))")
 is "shoot parseStates" '[[{"name":"main"}],[{"name":"main"},{"name":"empty"}],[{"name":"x"}],[{"name":"dense","query":"?n=500"}]]' "$STATES"
 node "$SHOOT" >/dev/null 2>&1; is "shoot usage error exits 1" 1 $?
 HELP=$(node --input-type=module -e "
-import { parseThemes, pairNames } from '$SHOOT';
+import { parseThemes, pairNames } from '$SHOOT_URL';
 let bad = 'no-throw'; try { parseThemes('sepia') } catch { bad = 'throws' }
-console.log(JSON.stringify([parseThemes(), parseThemes('dark'), bad, pairNames('/r/round-3-main-mobile-dark.png', 'round-3', 'round-0')]))")
+console.log(JSON.stringify([parseThemes(), parseThemes('dark'), bad, pairNames('/r/round-3-main-mobile-dark.png', 'round-3', 'round-0')]))" | nrm)
 is "shoot themes + compare names" '[["light","dark"],["dark"],"throws",{"before":"/r/round-0-main-mobile-dark.png","sheet":"/r/cmp-round-3-main-mobile-dark.png"}]' "$HELP"
 
 # 7 — pr-shots.sh: copies round-0 + final shots onto the branch, commits, prints raw-URL table.

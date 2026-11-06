@@ -2,6 +2,13 @@
 # Tests scripts/super-board-readme-sync.py and hooks/pre-commit-readme.sh against
 # a throwaway copy of the pack, so the real README is never touched.
 set -euo pipefail
+# python3 may be a Windows Store stub: put a working `python3` shim on PATH (also covers shebangs).
+. "$(dirname "${BASH_SOURCE[0]}")/../scripts/super-board-python.sh"; sb_python_init || exit 1
+sb_python_shim
+# Paths in JSON handed to a native Python must be C:/... on Windows, not MSYS /tmp/....
+wp() { cygpath -m "$1" 2>/dev/null || printf %s "$1"; }
+# Fixture repos: never inherit a global core.autocrlf=true (it rewrites checked-out files to CRLF).
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.autocrlf GIT_CONFIG_VALUE_0=false
 cd "$(dirname "$0")/.."
 PACK=$PWD
 fail() { echo "FAIL: $1" >&2; exit 1; }
@@ -71,13 +78,13 @@ rm -rf "$T"; ok
 # 4 — --hook syncs only for an edit under skills/, and always exits 0.
 copy
 fam 'd["you_type"]["skills"]["visual"] = "Hook brief."'
-printf '{"tool_input":{"file_path":"%s/docs/x.md"}}' "$T" | python3 "$SYNC" --hook || fail "--hook must exit 0"
+printf '{"tool_input":{"file_path":"%s/docs/x.md"}}' "$(wp "$T")" | python3 "$SYNC" --hook || fail "--hook must exit 0"
 grep -q "Hook brief." "$T/README.md" && fail "--hook must not sync for a path outside skills/"
 printf 'not json' | python3 "$SYNC" --hook || fail "--hook must exit 0 on bad input"
-printf '{"tool_input":{"file_path":"%s/skills/visual/SKILL.md"}}' "$T" | python3 "$SYNC" --hook || fail "--hook must exit 0"
+printf '{"tool_input":{"file_path":"%s/skills/visual/SKILL.md"}}' "$(wp "$T")" | python3 "$SYNC" --hook || fail "--hook must exit 0"
 grep -q "Hook brief." "$T/README.md" || fail "--hook should sync after an edit under skills/"
 mkdir -p "$T/skills/orphan"; printf -- '---\nname: orphan\ndescription: x\n---\n' > "$T/skills/orphan/SKILL.md"
-printf '{"tool_input":{"file_path":"%s/skills/orphan/SKILL.md"}}' "$T" | python3 "$SYNC" --hook 2>/dev/null || fail "--hook must exit 0 even on an input error"
+printf '{"tool_input":{"file_path":"%s/skills/orphan/SKILL.md"}}' "$(wp "$T")" | python3 "$SYNC" --hook 2>/dev/null || fail "--hook must exit 0 even on an input error"
 rm -rf "$T"; ok
 
 # 5 — pre-commit-readme.sh: a staged skill change with a stale README stops the

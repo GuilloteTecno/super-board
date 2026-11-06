@@ -1,10 +1,13 @@
 """Configuration readiness at the real preflight interfaces; no network or apps."""
 import json
+import sys
 import os
 import pathlib
 import subprocess
 import tempfile
 import unittest
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _compat import BASH  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CHECK = ROOT / "scripts/super-board-verification-ready.py"
@@ -17,19 +20,19 @@ class VerificationReadiness(unittest.TestCase):
                 path = pathlib.Path(tmp) / "config.json"
                 config = {"worker_backend": "claude-p", "verify_commands": commands}
                 path.write_text(json.dumps(config))
-                result = subprocess.run(["python3", str(CHECK), "--config", str(path)],
+                result = subprocess.run([sys.executable, str(CHECK), "--config", str(path)],
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 9)
                 self.assertIn("verify_commands", result.stderr)
                 self.assertIn("verification-readiness", result.stderr)
                 # Planner must reject before it reads the supplied (nonexistent) items.
-                result = subprocess.run(["bash", str(ROOT / "scripts/super-board-wave-plan.sh"),
+                result = subprocess.run([BASH, str(ROOT / "scripts/super-board-wave-plan.sh"),
                                          "--config", str(path), "--items", str(path.parent / "absent")],
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 9, result.stderr)
 
     def test_configured_project_commands_are_accepted_without_running_them(self):
-        result = subprocess.run(["python3", str(CHECK), "--config", "-"],
+        result = subprocess.run([sys.executable, str(CHECK), "--config", "-"],
                                 input=json.dumps({"verify_commands": ["", " \t", "make check"]}),
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -54,9 +57,9 @@ class VerificationReadiness(unittest.TestCase):
                         else ["--cards", json.dumps([card])])
                 if launcher == "super-board-lane.sh":
                     args = ["--backend", "codex"] + args
-                result = subprocess.run(["bash", str(ROOT / "scripts" / launcher),
+                result = subprocess.run([BASH, str(ROOT / "scripts" / launcher),
                                          "--config", str(config), "--codex"] + args,
-                                        cwd=root, env=dict(os.environ, PATH=str(binary.parent) + ":" + os.environ["PATH"]),
+                                        cwd=root, env=dict(os.environ, PATH=str(binary.parent) + os.pathsep + os.environ["PATH"]),
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 9, result.stderr)
                 self.assertTrue(json.loads(result.stdout)["status"] == "halted" if "lane" in launcher
@@ -71,7 +74,7 @@ class VerificationReadiness(unittest.TestCase):
             cfg = root / ".claude/super-board/configs/app.json"
             cfg.parent.mkdir(parents=True)
             cfg.write_text(json.dumps({"verify_commands": [" "]}))
-            command = ["python3", str(ROOT / "scripts/super-board-setup.py"),
+            command = [sys.executable, str(ROOT / "scripts/super-board-setup.py"),
                        "check", "--root", str(root), "--pack", str(ROOT)]
             result = subprocess.run(command, capture_output=True, text=True)
             report = json.loads(result.stdout)
@@ -87,7 +90,7 @@ class VerificationReadiness(unittest.TestCase):
             cfg = root / ".claude/super-board/configs/app.json"
             cfg.parent.mkdir(parents=True)
             cfg.write_text(json.dumps({"worker_backend": "claude-p", "verify_commands": []}))
-            result = subprocess.run(["bash", str(ROOT / "scripts/super-board-run.sh"), "app"],
+            result = subprocess.run([BASH, str(ROOT / "scripts/super-board-run.sh"), "app"],
                                     cwd=root, capture_output=True, text=True)
             self.assertEqual(result.returncode, 9, result.stderr)
             self.assertFalse((root / "docs").exists())

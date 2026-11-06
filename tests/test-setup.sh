@@ -6,6 +6,11 @@
 #
 #   bash tests/test-setup.sh
 set -euo pipefail
+# python3 may be a Windows Store stub: put a working `python3` shim on PATH (also covers shebangs).
+. "$(dirname "${BASH_SOURCE[0]}")/../scripts/super-board-python.sh"; sb_python_init || exit 1
+sb_python_shim
+# Fixture repos: never inherit a global core.autocrlf=true (it rewrites checked-out files to CRLF).
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.autocrlf GIT_CONFIG_VALUE_0=false
 cd "$(dirname "$0")/.."
 PACK="$PWD"
 SETUP="$PACK/scripts/super-board-setup.py"
@@ -276,7 +281,9 @@ q '[.items[] | {(.id): .status}] | add == {"I1":"Done","I2":"Building","I3":"Rev
   || fail "prune-empty must put every wiped status back: $(jq -c .items "$GH_STATE")"
 echo "$OUT" | q '.restored == 3' || fail "three cards should be restored: $OUT"
 BK=$(echo "$OUT" | jq -r .status_backup)
-case "$BK" in "$WORK/.claude/super-board/backup/board-2-"*.json) ;; *) fail "backup path wrong: $BK" ;; esac
+# A native python prints C:\x\y; compare in C:/x/y form (WORKM is $WORK written the same way).
+WORKM=$(cygpath -m "$WORK" 2>/dev/null || printf %s "$WORK"); BK=$(printf %s "$BK" | tr '\\' /)
+case "$BK" in "$WORKM/.claude/super-board/backup/board-2-"*.json) ;; *) fail "backup path wrong: $BK" ;; esac
 q '. == {"I1":"Done","I2":"Building","I3":"Review","I4":null}' "$BK" || fail "backup must hold the pre-rewrite statuses: $(cat "$BK")"
 
 # 11 — a gh that does not surface `status`: the snapshot falls back to GraphQL

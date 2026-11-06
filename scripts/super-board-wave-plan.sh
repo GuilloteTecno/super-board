@@ -72,6 +72,13 @@
 #     "refreshApproval": [ {"number":52,"title":"…","why":"PR head changed after review"} ],
 #     "flag":  [ {"number":82,"title":"…","why":"…"} ],
 #     "stranded": [ {"number":44,"title":"…"} ] }
+# Windows: `python3` may be a Store stub; use the resolved interpreter when the resolver ships alongside.
+for _sb_py_lib in "$(dirname "${BASH_SOURCE[0]}")"/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../scripts/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../bin/super-board-python.sh; do
+  [ -f "$_sb_py_lib" ] || continue
+  . "$_sb_py_lib"; [ -n "${SB_PYTHON:-}" ] || sb_python_init 2>/dev/null || true
+  break
+done
+unset _sb_py_lib
 set -euo pipefail
 
 CONFIG=""; ITEMS_FILE=""; DEPS_FILE=""
@@ -89,9 +96,9 @@ done
 # which is a FIFO and cannot be read twice.
 CONFIG_JSON=$(cat "$CONFIG")
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-printf '%s\n' "$CONFIG_JSON" | python3 "$HERE/super-board-verification-ready.py" --config -
+printf '%s\n' "$CONFIG_JSON" | "${SB_PYTHON:-python3}" "$HERE/super-board-verification-ready.py" --config -
 export SB_REPO_PATH=$(echo "$CONFIG_JSON" | jq -r '.repo.path // "."')
-python3 "$HERE/super-board-github-read.py" --check
+"${SB_PYTHON:-python3}" "$HERE/super-board-github-read.py" --check
 VARIANT=$(echo "$CONFIG_JSON" | jq -r '.variant // ""')
 # 0 or absent = unlimited. A wave is sized by the dependency graph, not a knob.
 MAX_WORKERS=$(echo "$CONFIG_JSON" | jq -r '.max_workers // 0')

@@ -90,7 +90,12 @@ main() {
   elif have git; then fetch="git"
   else die "I need either curl + tar, or git, to download super-board. Install one of those and run this again." 69
   fi
-  have python3 || die "python3 is missing. super-board's installer and scripts use it. Install Python 3 (https://www.python.org/downloads/) and run this again." 69
+  # A python3 that actually runs: on Windows `python3` is often the Microsoft Store stub.
+  local PY="" c
+  for c in python3 python; do
+    if have "$c" && "$c" -c 'import sys; sys.exit(0 if sys.version_info[0] == 3 else 1)' >/dev/null 2>&1; then PY="$c"; break; fi
+  done
+  [ -n "$PY" ] || die "python3 is missing. super-board's installer and scripts use it. Install Python 3 (https://www.python.org/downloads/) and run this again." 69
 
   # One grouped line: what is here ✓, what is not ✗ (onboard's 🔍 Checks installs it).
   local later="" ok="" t
@@ -99,7 +104,9 @@ main() {
       curl|tar) [ "$fetch" = "tar" ] || continue ;;
       git) [ "$fetch" = "git" ] || continue ;;
     esac
-    if have "$t" && { [ "$t" != node ] || have npx; }; then ok="${ok:+$ok · }$t"; else later="$later $t"; fi
+    if [ "$t" = python3 ]; then
+      ok="${ok:+$ok · }python3"   # label only: the probe above already proved a Python 3 runs
+    elif have "$t" && { [ "$t" != node ] || have npx; }; then ok="${ok:+$ok · }$t"; else later="$later $t"; fi
   done
   say "🔍 checking what you need"
   if [ -n "$later" ]; then
@@ -121,7 +128,7 @@ main() {
   elif [ "$fetch" = "tar" ]; then
     if [ -z "$ref" ]; then
       ref="$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" 2>/dev/null \
-        | python3 -c 'import json,sys
+        | "$PY" -c 'import json,sys
 try: print(json.load(sys.stdin).get("tag_name",""))
 except Exception: print("")' 2>/dev/null || true)"
       if [ -z "$ref" ]; then warn "couldn't find a published release; using the main branch instead."; ref="main"; fi

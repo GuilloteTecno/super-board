@@ -152,7 +152,7 @@ def check(command, cwd, root_of, env):
         if not repo:
             continue  # not a repository: git itself will refuse
         allowed = os.path.join(repo, ALLOWED_DIR)
-        if resolved and resolved.startswith(allowed + os.sep):
+        if resolved and os.path.normcase(resolved).startswith(os.path.normcase(allowed + os.sep)):
             continue
         where = ("resolves to " + resolved) if resolved else "cannot be resolved before it runs"
         return (
@@ -170,7 +170,8 @@ def toplevel_of(d):
     try:
         r = subprocess.run(["git", "-C", d, "rev-parse", "--show-toplevel"], capture_output=True,
                            text=True, env=env, timeout=10)
-        return r.stdout.strip() if r.returncode == 0 else None
+        # git prints C:/x/y on Windows; match the backslash form normpath gives the targets.
+        return os.path.normpath(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
     except (OSError, subprocess.TimeoutExpired):
         return None
 
@@ -184,7 +185,7 @@ def main():
         cwd = payload.get("cwd") or os.getcwd()
 
         def root_of(d):
-            top = toplevel_of(d) or (os.environ.get("CLAUDE_PROJECT_DIR") if d == cwd else None)
+            top = toplevel_of(d) or (os.path.normpath(os.environ["CLAUDE_PROJECT_DIR"]) if d == cwd and os.environ.get("CLAUDE_PROJECT_DIR") else None)
             return repo_root(top) if top else None
 
         reason = check(command, cwd, root_of, dict(os.environ))

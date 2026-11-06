@@ -85,6 +85,9 @@ def merge_allow(settings: dict, rules: list[str]) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    for stream in (sys.stdout, sys.stderr):  # cp1252 consoles on Windows cannot print the check mark
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     dry = "--dry-run" in argv
     args = [a for a in argv if a != "--dry-run"]
     if len(args) < 3 or args[0] not in ("hooks", "allow"):

@@ -7,6 +7,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _compat import BASH, bash_path  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("approval", ROOT / "scripts/super-board-approval.py")
@@ -229,7 +232,7 @@ print(json.dumps(out))
             env = dict(os.environ, PATH=str(work) + os.pathsep + os.environ["PATH"], APPROVAL_FIXTURE=str(fixture_path), SB_GITHUB_RETRY_DELAY="0", SB_GITHUB_HALT_FILE=str(work / "halt.json"))
             def deps():
                 fixture_path.write_text(json.dumps(fixture))
-                run = subprocess.run([str(ROOT / "scripts/super-board-deps.sh"), "--repo", "x/y"], env=env,
+                run = subprocess.run([BASH, bash_path(ROOT / "scripts/super-board-deps.sh"), "--repo", "x/y"], env=env,
                                      capture_output=True, text=True, check=True)
                 return json.loads(run.stdout)["3"]
             self.assertTrue(deps()["needsYouDone"], "current approval resumes even after an outsider fake block")

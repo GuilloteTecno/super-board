@@ -36,6 +36,7 @@ Adapted from BookKeepingApp's cleanup-wt (Eric Tech), generalised for any repo.
 import datetime
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -172,11 +173,15 @@ def merged_state(cwd, tip, bases, merged_pr_oids=()):
 def pull_requests(cwd):
     """{open: {branch: number}, merged: {branch: [oid]}}, or None when gh is unavailable."""
     exe = os.environ.get("CLEANUP_WT_GH", "gh")
+    prefix = [exe]
+    if os.name == "nt" and os.path.isfile(exe) and not exe.lower().endswith((".exe", ".cmd", ".bat", ".com")):
+        # Windows cannot exec a shell-script wrapper directly; let Git Bash execute it (honours the shebang).
+        prefix = [shutil.which("bash") or "bash", "-c", 'exec "$0" "$@"', exe]
     env = dict(os.environ, GH_PROMPT_DISABLED="1", GH_NO_UPDATE_NOTIFIER="1", GH_PAGER="cat")
 
     def gh(*args):
         try:
-            r = subprocess.run([exe] + list(args), cwd=cwd, capture_output=True, text=True, env=env, timeout=15)
+            r = subprocess.run(prefix + list(args), cwd=cwd, capture_output=True, text=True, env=env, timeout=15)
             return json.loads(r.stdout or "[]") if r.returncode == 0 else None
         except (OSError, ValueError, subprocess.TimeoutExpired):
             return None

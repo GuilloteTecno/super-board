@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Stop integration uses local dummy processes and gh/ps/pgrep stubs only.
 set -euo pipefail
+# The stop path signals a native process with SIGTERM and reads POSIX pids; Git Bash cannot
+# deliver SIGTERM to a native python.exe (its pid is a Windows pid), so this test used to hang.
+case "$(uname -s)" in MINGW*|MSYS*) echo 'SKIP: test-codex-stop.sh (POSIX signals/pids; not meaningful under Git Bash)'; exit 0 ;; esac
+# python3 may be a Windows Store stub: put a working `python3` shim on PATH (also covers shebangs).
+. "$(dirname "${BASH_SOURCE[0]}")/../scripts/super-board-python.sh"; sb_python_init || exit 1
+sb_python_shim
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TMP=$(mktemp -d)
 wave_pid=""

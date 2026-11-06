@@ -57,6 +57,13 @@
 # card is not human-gated. `humanGated` comes from `blocked-by: -`, which means
 # "nothing on this board clears it" — credentials, permissions, a product ruling.
 # The sweep must never free one of those; only a person can.
+# Windows: `python3` may be a Store stub; use the resolved interpreter when the resolver ships alongside.
+for _sb_py_lib in "$(dirname "${BASH_SOURCE[0]}")"/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../scripts/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../bin/super-board-python.sh; do
+  [ -f "$_sb_py_lib" ] || continue
+  . "$_sb_py_lib"; [ -n "${SB_PYTHON:-}" ] || sb_python_init 2>/dev/null || true
+  break
+done
+unset _sb_py_lib
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -81,7 +88,7 @@ else
   # lives in a COMMENT and the REST list cannot return comments. One query gets
   # bodies and comments together; `gh issue view` per issue would be one REST
   # call each, and a 35-card board burns that budget for no reason.
-  PAGES=$(python3 "$HERE/super-board-github-read.py" --kind issues -- api graphql --paginate --slurp -f query='
+  PAGES=$("${SB_PYTHON:-python3}" "$HERE/super-board-github-read.py" --kind issues -- api graphql --paginate --slurp -f query='
     query($owner:String!,$repo:String!,$endCursor:String){
       repository(owner:$owner,name:$repo){
         issues(states:OPEN,first:100,after:$endCursor){
@@ -192,4 +199,4 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
           needsYouDone: false }
     ]
   | ( if $filter == null then . else map(select(.number as $n | $filter | index($n))) end )
-  | INDEX(.number | tostring)' | python3 "$(dirname "${BASH_SOURCE[0]}")/super-board-approval.py" --deps --repo "$APPROVAL_REPO"
+  | INDEX(.number | tostring)' | "${SB_PYTHON:-python3}" "$(dirname "${BASH_SOURCE[0]}")/super-board-approval.py" --deps --repo "$APPROVAL_REPO"

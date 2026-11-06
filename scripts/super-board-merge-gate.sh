@@ -107,6 +107,13 @@
 # card a human will merge does not need the gate's build proof spent on it —
 # and migrations run after verification, inside the lock, right before the
 # merge. `--dry-run` reports both and runs neither.
+# Windows: `python3` may be a Store stub; use the resolved interpreter when the resolver ships alongside.
+for _sb_py_lib in "$(dirname "${BASH_SOURCE[0]}")"/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../scripts/super-board-python.sh "$(dirname "${BASH_SOURCE[0]}")"/../../../bin/super-board-python.sh; do
+  [ -f "$_sb_py_lib" ] || continue
+  . "$_sb_py_lib"; [ -n "${SB_PYTHON:-}" ] || sb_python_init 2>/dev/null || true
+  break
+done
+unset _sb_py_lib
 set -euo pipefail
 # Fixed read commands: a malformed payload is GitHub's, so it halts (#32).
 export SB_GITHUB_READ_STRICT=1
@@ -143,7 +150,7 @@ if [ -z "$STALE_AFTER" ]; then
 fi
 
 CONFIG_JSON=$(cat "$CONFIG")
-printf '%s\n' "$CONFIG_JSON" | python3 "$HERE/super-board-verification-ready.py" --config -
+printf '%s\n' "$CONFIG_JSON" | "${SB_PYTHON:-python3}" "$HERE/super-board-verification-ready.py" --config -
 BASE=$(echo "$CONFIG_JSON" | jq -r '.base_branch // "main"')
 REPO=$(echo "$CONFIG_JSON" | jq -r '.repo.remote // ""' | sed -E 's#^https?://github\.com/##; s#\.git$##')
 REPO_PATH=$(echo "$CONFIG_JSON" | jq -r '.repo.path // "."')
@@ -160,7 +167,7 @@ if [ "${#VERIFY[@]}" -eq 0 ]; then
   echo "verification-readiness: verify_commands yielded no usable shell commands; repair the project config and restart the board." >&2
   exit 9
 fi
-python3 "$GITHUB_READ" --check
+"${SB_PYTHON:-python3}" "$GITHUB_READ" --check
 
 LOCK_DIR="${REPO_PATH}/.claude/super-board/inflight/merge.lock"
 mkdir -p "$(dirname "$LOCK_DIR")"
@@ -206,12 +213,12 @@ trap cleanup EXIT
 # ---- the head guard --------------------------------------------------------
 # Review evidence belongs to one commit. If the branch moved after the Reviewer
 # passed it, the tests it reran and the diff it read describe something else.
-pr_head() { python3 "$GITHUB_READ" --kind head -- pr view "$PR" ${REPO:+--repo "$REPO"} --json headRefName,headRefOid \
+pr_head() { "${SB_PYTHON:-python3}" "$GITHUB_READ" --kind head -- pr view "$PR" ${REPO:+--repo "$REPO"} --json headRefName,headRefOid \
               -q '.headRefName + " " + .headRefOid'; }
 HEAD=$(pr_head) || exit $?
 read -r HEAD_REF HEAD_SHA <<<"$HEAD"
 [ -n "${HEAD_SHA:-}" ] || { say "could not read the PR head from GitHub"; exit 1; }
-pr_state() { python3 "$GITHUB_READ" --kind merge-state -- pr view "$PR" ${REPO:+--repo "$REPO"} --json state,mergeCommit,headRefOid; }
+pr_state() { "${SB_PYTHON:-python3}" "$GITHUB_READ" --kind merge-state -- pr view "$PR" ${REPO:+--repo "$REPO"} --json state,mergeCommit,headRefOid; }
 STATE=$(pr_state) || exit $?
 if [ "$(echo "$STATE" | jq -r .state)" = MERGED ]; then
   say "already merged; no verification, migration, or merge is repeated"
@@ -236,9 +243,9 @@ fi
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Outside $SCRATCH: `git worktree add` below needs that directory empty.
 META=$(mktemp); DIFF=$(mktemp)
-python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} --json labels,files,additions,deletions,changedFiles,body > "$META"
-python3 "$GITHUB_READ" --kind diff --meta "$META" -- pr diff "$PR" ${REPO:+--repo "$REPO"} > "$DIFF"
-PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$META" --diff "$DIFF") || {
+"${SB_PYTHON:-python3}" "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} --json labels,files,additions,deletions,changedFiles,body > "$META"
+"${SB_PYTHON:-python3}" "$GITHUB_READ" --kind diff --meta "$META" -- pr diff "$PR" ${REPO:+--repo "$REPO"} > "$DIFF"
+PLAN=$("${SB_PYTHON:-python3}" "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$META" --diff "$DIFF") || {
   echo "human-gate: policy — could not classify the PR (unreadable metadata)"
   say "merge policy could not be evaluated — a human merges this one"; exit 7; }
 
@@ -246,13 +253,13 @@ PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$M
 # and policy/commands. Re-read trusted approval evidence; never mint it here.
 APPROVED=false
 approval_check() {
-  APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --pr "$PR" \
+  APPROVAL=$("${SB_PYTHON:-python3}" "$HERE/super-board-approval.py" --repo "$REPO" --pr "$PR" \
     --head "$HEAD_SHA" --plan "$PLAN") || APPROVAL='{"approved":false}'
-  python3 "$GITHUB_READ" --check || exit $?
+  "${SB_PYTHON:-python3}" "$GITHUB_READ" --check || exit $?
   APPROVED=$(echo "$APPROVAL" | jq -r '.approved // false')
 }
 approval_request() {
-  python3 "$HERE/super-board-approval.py" --request --repo "$REPO" --pr "$PR" \
+  "${SB_PYTHON:-python3}" "$HERE/super-board-approval.py" --request --repo "$REPO" --pr "$PR" \
     --head "$HEAD_SHA" --plan "$PLAN"
 }
 HUMAN=$(echo "$PLAN" | jq -r '.human[] | "human-gate: \(.category) — \(.why)"')
@@ -289,7 +296,7 @@ for cmd in "${VERIFY[@]}"; do
 done
 say "verified green against ${BASE} (${#VERIFY[@]} command(s))"
 
-python3 "$GITHUB_READ" --check
+"${SB_PYTHON:-python3}" "$GITHUB_READ" --check
 
 # ---- migrations (inside the lock, after the build proof) -------------------
 # Run the configured migrate command for every allowed env, from the verified
@@ -303,7 +310,7 @@ if [ "$(echo "$PLAN" | jq '.migrations | length')" -gt 0 ]; then
     [ -n "$env" ] || continue
     if [ "$DRY" -eq 1 ]; then say "dry run: would migrate ${env}: ${cmd}"; continue; fi
     say "migrate ${env}: ${cmd}"
-    python3 "$GITHUB_READ" --check
+    "${SB_PYTHON:-python3}" "$GITHUB_READ" --check
     if ! ( cd "$SCRATCH" && eval "$cmd" ) >"$SCRATCH/.migrate.log" 2>&1; then
       say "FAILED: migrate ${env}"; tail -20 "$SCRATCH/.migrate.log" >&2
       NEEDS+=("${cmd}   # ${env}: failed in the merge gate — fix, run it, then mark done")
@@ -326,8 +333,8 @@ fi
 if [ "$APPROVED" = true ]; then
   # Code remains pinned; body-declared human steps and config can change without
   # a commit. Reclassify them too instead of reusing the old approval scope.
-  python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} --json labels,files,additions,deletions,changedFiles,body > "$META"
-  PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$META" --diff "$DIFF") || {
+  "${SB_PYTHON:-python3}" "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} --json labels,files,additions,deletions,changedFiles,body > "$META"
+  PLAN=$("${SB_PYTHON:-python3}" "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$META" --diff "$DIFF") || {
     say "human approval scope could not be refreshed"; exit 7; }
   approval_check
   if [ "$APPROVED" != true ]; then
@@ -345,7 +352,7 @@ fi
 
 # --match-head-commit makes GitHub refuse if anything was pushed after HEAD_SHA,
 # including during the verification run above.
-python3 "$GITHUB_READ" --check
+"${SB_PYTHON:-python3}" "$GITHUB_READ" --check
 if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
      ${SUBJECT:+--subject "$SUBJECT"} ${MSG_FILE:+--body-file "$MSG_FILE"} \
      --match-head-commit "$HEAD_SHA" 2>&1 | tail -3 >&2; then
@@ -354,7 +361,7 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
   # redundant. Optional (only when the cleanup-wt hook is installed), local-only, and it
   # can never fail the merge that already happened.
   if [ -f "$REPO_PATH/.claude/hooks/cleanup-wt.py" ]; then
-    ( cd "$REPO_PATH" && python3 .claude/hooks/cleanup-wt.py --post-merge --base "$BASE" </dev/null ) >&2 || true
+    ( cd "$REPO_PATH" && "${SB_PYTHON:-python3}" .claude/hooks/cleanup-wt.py --post-merge --base "$BASE" </dev/null ) >&2 || true
   fi
   exit 0
 fi
@@ -369,4 +376,4 @@ if [ "$NOW_SHA" != "$HEAD_SHA" ]; then
   say "the review evidence is void — send the card back to Review"
   exit 6
 fi
-python3 "$GITHUB_READ" --halt "Merge response failed and GitHub has not confirmed a merge; reconcile PR #${PR} before restarting. No merge was retried."
+"${SB_PYTHON:-python3}" "$GITHUB_READ" --halt "Merge response failed and GitHub has not confirmed a merge; reconcile PR #${PR} before restarting. No merge was retried."

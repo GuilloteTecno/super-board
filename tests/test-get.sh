@@ -4,6 +4,9 @@
 # arguments instead of reaching the network. Each case installs into a fresh
 # temp target and checks what landed.
 set -euo pipefail
+# python3 may be a Windows Store stub: put a working `python3` shim on PATH (also covers shebangs).
+. "$(dirname "${BASH_SOURCE[0]}")/../scripts/super-board-python.sh"; sb_python_init || exit 1
+sb_python_shim
 cd "$(dirname "$0")/.."
 PACK="$PWD"
 GET="$PACK/get.sh"
@@ -16,7 +19,9 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/src/super-board-test"
 tar -cf - --exclude ./.git --exclude ./evals --exclude ./docs . | tar -xf - -C "$WORK/src/super-board-test"
 tar -czf "$WORK/pack.tgz" -C "$WORK/src" super-board-test
-export SUPER_BOARD_TARBALL="file://$WORK/pack.tgz"
+# A native curl cannot open an MSYS /tmp path: hand it the mixed (C:/...) form where cygpath exists.
+WORK_URL=$(cygpath -m "$WORK" 2>/dev/null || printf %s "$WORK")
+export SUPER_BOARD_TARBALL="file://$WORK_URL/pack.tgz"
 
 # Stubs: npx records its argv; gh and jq exist so no warnings fire.
 mkdir -p "$WORK/bin"
@@ -90,7 +95,7 @@ if bash "$GET" --bogus --no-helper-skills --target "$T" >/dev/null 2>&1; then fa
 # 7 — a bad tarball URL fails cleanly and leaves no temp folder behind.
 T="$WORK/t7"; mkdir -p "$T"
 mkdir -p "$WORK/tmp7"
-if TMPDIR="$WORK/tmp7" SUPER_BOARD_TARBALL="file://$WORK/nope.tgz" bash "$GET" --no-helper-skills --target "$T" >/dev/null 2>&1; then
+if TMPDIR="$WORK/tmp7" SUPER_BOARD_TARBALL="file://$WORK_URL/nope.tgz" bash "$GET" --no-helper-skills --target "$T" >/dev/null 2>&1; then
   fail "missing tarball was accepted"
 fi
 [ -z "$(ls -A "$WORK/tmp7")" ] || fail "temp folder was left behind after a failed download"
@@ -111,9 +116,16 @@ printf '%s\n' "$out" | grep -q '^🧠 helper skills: installed$' || fail "helper
 T="$WORK/t9"; mkdir -p "$T"
 # /usr/bin can contain node on Linux. Keep only the tools this install uses.
 NOBIN="$WORK/bin-nonode"; mkdir -p "$NOBIN"
-for t in bash id curl tar gzip python3 mktemp mkdir rm dirname tr cp ln chmod grep basename sed gh jq; do
-  ln -s "$(command -v "$t")" "$NOBIN/$t"
+for t in bash id curl tar gzip mktemp mkdir rm dirname tr cp ln chmod grep basename sed gh jq uname cat; do
+  # -P: the executable, never a shell function (jq may be one on Windows).
+  case "$(uname -s)" in
+    MINGW*|MSYS*) # a copied .exe loses its sibling DLLs, so wrap the real one instead
+      printf '#!/bin/sh\nexec "%s" "$@"\n' "$(type -P "$t")" > "$NOBIN/$t"; chmod +x "$NOBIN/$t" ;;
+    *) ln -s "$(type -P "$t")" "$NOBIN/$t" ;;
+  esac
 done
+# python3: a shim onto the interpreter that really runs (Windows' python3 is a Store stub)
+printf '#!/bin/sh\nexec "%s" "$@"\n' "$(type -P "$SB_PYTHON")" > "$NOBIN/python3"; chmod +x "$NOBIN/python3"
 out=$(PATH="$NOBIN" bash "$GET" --target "$T" 2>&1) || fail "install without node failed: $out"
 printf '%s\n' "$out" | grep -q '✗ node' || fail "missing node should be marked ✗: $out"
 printf '%s\n' "$out" | grep -q '^🧠 helper skills: skipped — 🔍 Checks will fix this$' || fail "helper line should defer to Checks: $out"
